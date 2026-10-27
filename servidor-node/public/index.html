@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-br"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prensa de grampo</title>
+<style>
+:root{--bg:#10151c;--card:#1a222d;--tx:#e8edf3;--mut:#8896a8;--line:#2b3747;
+--ok:#2ecc71;--atencao:#f1c40f;--falha:#ff4d4d;--parada:#ff4d4d;--ociosa:#8896a8;--medindo:#4aa3ff;--semcom:#ff4d4d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px system-ui,sans-serif;padding:16px;max-width:1200px;margin:auto}
+h1{font-size:20px;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.pill{font-size:13px;padding:4px 10px;border-radius:99px;background:#4a5666}.pill.on{background:var(--ok);color:#052}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px}
+.card{background:var(--card);border-radius:12px;padding:14px}
+.lbl{color:var(--mut);font-size:13px}.val{font-size:34px;font-weight:700;margin-top:4px}.sub{color:var(--mut);font-size:12px;margin-top:2px}
+#banner{border-radius:12px;padding:16px 20px;margin-bottom:12px;background:var(--card);border-left:10px solid var(--ociosa)}
+#bt{font-size:26px;font-weight:800}#bm{color:var(--mut);margin-top:4px}
+canvas{width:100%;height:170px;display:block}
+button,input,select{font:inherit;color:var(--tx);background:#2b3747;border:0;border-radius:8px;padding:8px 12px}
+button{cursor:pointer}button:hover{background:#38475c}
+input{width:100%;margin-top:4px}
+.cfg{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));align-items:end}
+#log{font:13px ui-monospace,monospace;max-height:220px;overflow:auto}
+#log div{padding:2px 0;color:var(--mut)}#log .atencao{color:var(--atencao)}#log .falha{color:var(--falha)}#log .info{color:var(--ok)}
+</style></head><body>
+<h1><span>Prensa de grampo — monitor de batidas</span>
+<span><select id="sel" style="display:none" onchange="troca()"></select> <span id="conn" class="pill">aguardando a placa</span>
+<button onclick="rst()">Zerar contadores</button></span></h1>
+
+<div id="banner"><div id="bt">—</div><div id="bm"></div></div>
+
+<div class="grid">
+ <div class="card"><div class="lbl">Batidas por minuto</div><div class="val" id="spm">0</div><div class="sub" id="prog"></div></div>
+ <div class="card"><div class="lbl">Batidas (total)</div><div class="val" id="total">0</div><div class="sub" id="u60"></div></div>
+ <div class="card"><div class="lbl">Estado do sensor</div><div class="val" id="sensor" style="font-size:25px">—</div><div class="sub" id="sensor_sub">Aguardando leitura</div></div>
+ <div class="card"><div class="lbl">Batidas perdidas</div><div class="val" id="perd">0</div><div class="sub">intervalo ~2x o normal</div></div>
+ <div class="card"><div class="lbl">Batidas duplas</div><div class="val" id="dup">0</div><div class="sub" id="dups">ruído / duplo disparo</div></div>
+ <div class="card"><div class="lbl">Variação do ritmo</div><div class="val" id="var">0%</div><div class="sub" id="cic"></div></div>
+</div>
+
+<div class="card" style="margin-bottom:12px"><div class="lbl">Batidas por minuto — últimos 5 min (faixa verde = ritmo programado)</div><canvas id="c1"></canvas></div>
+<div class="card" style="margin-bottom:12px"><div class="lbl">Sinal do sensor — últimos 60 s (vermelho = batida com problema)</div><canvas id="c2"></canvas></div>
+
+<div class="card" style="margin-bottom:12px"><div class="lbl" style="margin-bottom:8px">Ritmo programado desta máquina</div>
+ <div class="cfg">
+  <label>Nome<input id="f_nome"></label>
+  <label>Batidas/min programadas<input id="f_spm" type="number" min="1"></label>
+  <label>Tolerância (%)<input id="f_tol" type="number" min="1"></label>
+  <label>Parada após (s)<input id="f_parada_s" type="number" step="0.5" min="1"></label>
+  <label>Perdidas p/ FALHA (60 s)<input id="f_falhas_limite" type="number" min="1"></label>
+  <label>Variação p/ instável (%)<input id="f_instab" type="number" min="5"></label>
+  <button onclick="salva()">Salvar</button>
+ </div></div>
+
+<div class="card"><div class="lbl">Alertas</div><div id="log"></div></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const COR={ok:'--ok',atencao:'--atencao',falha:'--falha',parada:'--parada',ociosa:'--ociosa',medindo:'--medindo',sem_comunicacao:'--semcom'};
+const TXT={ok:'OPERANDO NORMAL',atencao:'ATENÇÃO',falha:'FALHA',parada:'MÁQUINA PARADA',ociosa:'AGUARDANDO BATIDAS',medindo:'MEDINDO O RITMO…',sem_comunicacao:'SEM COMUNICAÇÃO'};
+let off=0,sel=null,snap={},H={},editando=false;
+const cor=n=>getComputedStyle(document.body).getPropertyValue(n).trim();
+function H_(id){return H[id]||(H[id]={spm:[],hits:[],alertas:[]});}
+function log(a){const d=document.createElement('div');d.className=a.nivel;
+ d.textContent=new Date(a.t*1000).toLocaleTimeString()+'  '+(Object.keys(snap).length>1?'['+a.maquina+'] ':'')+a.msg;
+ const l=$('log');l.prepend(d);while(l.children.length>100)l.lastChild.remove();}
+function mostra(){
+ const m=snap[sel];if(!m)return;const c=m.cfg;
+ $('bt').textContent=TXT[m.status]||m.status;$('bt').style.color=cor(COR[m.status]);
+ $('banner').style.borderLeftColor=cor(COR[m.status]);
+ $('bm').textContent=m.ativos.length?m.ativos.join(' · '):(m.status==='ok'?'Ritmo dentro do programado':'');
+ $('spm').textContent=Math.round(m.spm);
+ $('prog').textContent='programado '+c.spm+'/min ±'+c.tol+'%  ('+Math.round(c.spm*(1-c.tol/100))+'–'+Math.round(c.spm*(1+c.tol/100))+')';
+ $('total').textContent=m.total;$('u60').textContent=m.ultimos_60s+' no último minuto';
+ $('perd').textContent=m.perdidas;$('dup').textContent=m.duplas;
+ const se=m.sensor_estado||'desconhecido';$('sensor').textContent=se==='1'?'ACIONADO':se==='0'?'REPOUSO':'—';
+ $('sensor_sub').textContent=se==='desconhecido'?'Ainda sem estado recebido':'Último estado recebido pela rede';
+ $('dups').textContent='ruído/duplo disparo · '+(m.ruido||0)+' pulsos filtrados na placa';
+ $('var').textContent=m.variacao+'%';$('cic').textContent=m.ciclo==null?'':'último ciclo '+m.ciclo.toFixed(2)+' s';
+ const a=m.placa_ha,p=$('conn');
+ p.textContent=a==null?'aguardando a placa':a<6?'placa ativa ('+m.origem+')':'placa sem sinal há '+Math.round(a)+' s';
+ p.classList.toggle('on',a!=null&&a<6);
+ if(!editando&&document.activeElement.tagName!=='INPUT'){for(const k of ['nome','spm','tol','parada_s','falhas_limite','instab'])$('f_'+k).value=c[k];}
+}
+function atualizaSel(){const s=$('sel'),ids=Object.keys(snap);
+ if(s.options.length!==ids.length){s.innerHTML=ids.map(i=>`<option value="${i}">${snap[i].cfg.nome||i}</option>`).join('');}
+ s.style.display=ids.length>1?'':'none';if(!sel||!snap[sel])sel=ids[0];s.value=sel;}
+function troca(){sel=$('sel').value;$('log').innerHTML='';(H_(sel).alertas||[]).slice().reverse().forEach(log);mostra();}
+function salva(){const d={maquina:sel};for(const k of ['nome','spm','tol','parada_s','falhas_limite','instab'])d[k]=$('f_'+k).value;
+ fetch('/api/config',{method:'POST',body:JSON.stringify(d)});}
+function rst(){if(confirm('Zerar contadores desta máquina?'))fetch('/reset',{method:'POST',body:JSON.stringify({maquina:sel})});}
+document.addEventListener('input',e=>{if(e.target.closest('.cfg')){editando=true;clearTimeout(window._e);window._e=setTimeout(()=>editando=false,15000);}});
+
+function fundo(cv){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;
+ const x=cv.getContext('2d');x.scale(d,d);return [x,r.width,r.height];}
+function eixoX(x,w,h,jan,passo){x.strokeStyle=cor('--line');x.fillStyle=cor('--mut');x.font='11px system-ui';x.lineWidth=1;
+ for(let s=0;s<=jan;s+=passo){const px=w-s/jan*w;x.beginPath();x.moveTo(px,0);x.lineTo(px,h-14);x.stroke();
+  x.fillText(s?'-'+(jan>=120?s/60+'min':s+'s'):'agora',Math.min(w-30,Math.max(2,px-14)),h-2);}}
+function graf1(){const [x,w,h]=fundo($('c1'));const m=snap[sel];if(!m)return;const now=Date.now()/1000+off,J=300,c=m.cfg;
+ const ser=H_(sel).spm.filter(p=>now-p[0]<=J);const top=Math.max(c.spm*1.4,...ser.map(p=>p[1]))*1.05,Y=v=>(h-18)-(v/top)*(h-26);
+ eixoX(x,w,h,J,60);
+ x.fillStyle='rgba(46,204,113,.18)';x.fillRect(0,Y(c.spm*(1+c.tol/100)),w,Y(c.spm*(1-c.tol/100))-Y(c.spm*(1+c.tol/100)));
+ x.strokeStyle='rgba(46,204,113,.6)';x.beginPath();x.moveTo(0,Y(c.spm));x.lineTo(w,Y(c.spm));x.stroke();
+ x.fillStyle=cor('--mut');x.fillText(c.spm+'/min',4,Y(c.spm)-3);
+ x.strokeStyle='#ff9f43';x.lineWidth=2;x.beginPath();let ini=false;
+ for(const p of ser){const px=w-(now-p[0])/J*w;if(!ini){x.moveTo(px,Y(p[1]));ini=true}else x.lineTo(px,Y(p[1]));}x.stroke();}
+function graf2(){const [x,w,h]=fundo($('c2'));const now=Date.now()/1000+off,J=60;eixoX(x,w,h,J,10);
+ for(const p of H_(sel).hits){const t=p[0],px=w-(now-t)/J*w;if(px<0)continue;
+  x.strokeStyle=p[1]?cor('--falha'):'#ff9f43';x.lineWidth=p[1]?3:2;x.beginPath();x.moveTo(px,h-16);x.lineTo(px,18);x.stroke();}}
+function loop(){graf1();graf2();requestAnimationFrame(loop);}
+
+function conecta(){const es=new EventSource('/events');
+ es.onmessage=e=>{const m=JSON.parse(e.data);
+  if(m.type==='init'){snap=m.maquinas;off=m.now-Date.now()/1000;
+   for(const id in m.hist){const h=H_(id);h.spm=m.hist[id].spm;h.hits=m.hist[id].hits.map(t=>[t,null]);h.alertas=m.hist[id].alertas;}
+   atualizaSel();troca();}
+  else if(m.type==='snapshot'){snap=m.maquinas;off=m.now-Date.now()/1000;atualizaSel();
+   for(const id in snap){const h=H_(id);h.spm.push([m.now,snap[id].spm]);if(h.spm.length>600)h.spm.shift();
+    h.hits=h.hits.filter(p=>m.now-p[0]<=70);}mostra();}
+  else if(m.type==='hit'){const h=H_(m.id);h.hits.push([m.t,m.flag]);}
+  else if(m.type==='alert'){H_(m.maquina).alertas.unshift(m);if(m.maquina===sel)log(m);}
+  else if(m.type==='reset'){H_(m.id).hits=[];H_(m.id).spm=[];}};
+ es.onerror=()=>{$('conn').textContent='sem servidor';$('conn').classList.remove('on');};}
+conecta();loop();
+</script></body></html>

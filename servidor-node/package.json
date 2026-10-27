@@ -1,0 +1,16 @@
+{
+  "name": "prensa-mqtt-airfix",
+  "version": "1.0.0",
+  "description": "Monitoramento da prensa Airfix: broker MQTT embutido + dashboard (PLC32)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "aedes": "^1.2.0",
+    "mqtt": "^5.10.1"
+  }
+}

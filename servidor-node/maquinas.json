@@ -1,0 +1,11 @@
+{
+  "prensa1": {
+    "nome": "Prensa 1",
+    "modelo": "Formadora de grampo",
+    "spm": 155,
+    "tol": 10,
+    "parada_s": 3,
+    "falhas_limite": 3,
+    "instab": 25
+  }
+}
