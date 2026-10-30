@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="pt-br"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Máquinas e sensores</title>
+<link id="tema" rel="stylesheet" href="/estilo-moderno.css">
+<script>try{if(localStorage.getItem("tema")==="classico")document.getElementById("tema").href="/estilo-classico.css"}catch(e){}</script>
+<link rel="stylesheet" href="/estilo-comum.css">
+<style>
+ .maqs{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+ .linha{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+ .papel{font-size:11px;text-transform:uppercase;letter-spacing:.6px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);margin-left:6px}
+ .papel.batida{color:var(--ok);border-color:var(--ok)}
+ .papel.estado{color:var(--medindo);border-color:var(--medindo)}
+ .form{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));align-items:end;margin-top:12px}
+ .form label{font-size:12px;color:var(--mut)}
+ .erro{color:var(--falha);font-size:13px;min-height:1.2em;margin-top:6px}
+ .acoes{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+ .perigo{color:var(--falha)}
+ .cab{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+ details{margin-top:12px}
+ summary{cursor:pointer;color:var(--mut)}
+</style>
+</head><body>
+<h1><span>Máquinas e sensores</span>
+<span><a class="btn" href="/">← Dashboard</a> <a class="btn" href="/relatorio">Relatório</a> <button onclick="alternaTema()">Tema</button></span></h1>
+
+<p class="sub" style="margin:0 0 14px">Cada máquina pode ter vários sensores. <b>Só um sensor por máquina conta batidas</b> (papel <i>batida</i>). Os demais são <i>estado</i>: só informam o nível do sinal e não entram na produção.</p>
+
+<div class="card" style="margin-bottom:14px">
+ <div class="lbl" style="margin-bottom:6px">Nova máquina</div>
+ <div class="form">
+  <label>Nome<input id="n_nome" placeholder="Ex.: Prensa 2"></label>
+  <label>Batidas/min programadas<input id="n_spm" type="number" min="1" value="155"></label>
+  <label>Tolerância (%)<input id="n_tol" type="number" min="1" value="10"></label>
+  <button class="principal" onclick="criaMaquina()">Criar máquina</button>
+ </div>
+ <div class="erro" id="erro_nova"></div>
+</div>
+
+<div class="maqs" id="maquinas"></div>
+
+<div class="card" style="margin-top:14px">
+ <div class="lbl" style="margin-bottom:6px">Sensores recebidos pelo MQTT</div>
+ <div class="sub">Sensores que já enviaram mensagem, cadastrados ou não. Para atribuir um, use o campo <i>Sensor</i> no cartão da máquina.</div>
+ <table class="tab" style="margin-top:8px"><thead><tr><th>Sensor</th><th>Tópico</th><th>Última msg</th><th>Nível</th><th>Atribuído a</th></tr></thead><tbody id="tb_sens"></tbody></table>
+</div>
+<datalist id="nao_atrib"></datalist>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const NIVEL = (v) => (v === '1' ? 'ACIONADO' : v === '0' ? 'REPOUSO' : '—');
+const HA = (v) => (v == null ? '—' : v < 60 ? Math.round(v) + ' s' : Math.round(v / 60) + ' min');
+const STATUS = { ok: 'OPERANDO', atencao: 'ATENÇÃO', falha: 'FALHA', parada: 'PARADA', ociosa: 'AGUARDANDO', medindo: 'MEDINDO', sem_comunicacao: 'SEM COMUNICAÇÃO' };
+let maquinas = [], sensores = [], assinatura = '';
+
+async function api(metodo, url, corpo) {
+  const r = await fetch(url, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: corpo ? JSON.stringify(corpo) : undefined });
+  const t = await r.text();
+  let j = null;
+  try { j = JSON.parse(t); } catch (_) { /* resposta em texto */ }
+  if (!r.ok) throw new Error((j && j.erro) || t || 'erro ' + r.status);
+  return j ?? t;
+}
+
+// Estrutura do cartao (muda so quando o cadastro muda). Os valores ao vivo ficam em spans atualizados a cada 2 s,
+// assim o que voce esta digitando nao e apagado.
+const assinaturaDe = (m) => JSON.stringify([m.id, m.cfg.nome, m.cfg.spm, m.cfg.tol, m.cfg.parada_s, m.cfg.falhas_limite, m.cfg.instab, m.cfg.sensores || []]);
+
+function cartao(m) {
+  const c = m.cfg, id = esc(m.id), ss = c.sensores || [];
+  const linhas = ss.map((s) => `
+    <div class="linha">
+      <div><b>${esc(s.nome)}</b><span class="papel ${esc(s.papel)}">${esc(s.papel)}</span>
+        <div class="sub">entrada <b>${esc(s.id)}</b> · última msg <span id="ha-${esc(s.id)}">—</span> · nível <b id="nv-${esc(s.id)}">—</b></div></div>
+      <button class="perigo" onclick="removeSensor('${id}','${esc(s.id)}')">Remover</button>
+    </div>`).join('') || '<div class="sub" style="padding:8px 0">Nenhum sensor atribuído: esta máquina não conta batidas.</div>';
+  return `
+  <div class="card">
+    <div class="cab">
+      <div><div class="val" style="font-size:22px">${esc(c.nome)}</div>
+        <div class="sub">id <b>${id}</b> · ${esc(c.spm)}/min ±${esc(c.tol)}%</div></div>
+      <span class="pill" id="st-${id}">—</span>
+    </div>
+    <div style="margin-top:10px">${linhas}</div>
+    <div class="form">
+      <label>Sensor (entrada)<input list="nao_atrib" id="as_id_${id}" placeholder="ex.: sensor2"></label>
+      <label>Papel<select id="as_papel_${id}"><option value="estado">estado (só informa)</option><option value="batida">batida (conta)</option></select></label>
+      <label>Nome<input id="as_nome_${id}" placeholder="ex.: fim de curso"></label>
+      <button onclick="adicionaSensor('${id}')">Adicionar sensor</button>
+    </div>
+    <details>
+      <summary>Ritmo e parâmetros</summary>
+      <div class="form">
+        <label>Nome<input id="r_nome_${id}" value="${esc(c.nome)}"></label>
+        <label>Batidas/min<input id="r_spm_${id}" type="number" value="${esc(c.spm)}"></label>
+        <label>Tolerância %<input id="r_tol_${id}" type="number" value="${esc(c.tol)}"></label>
+        <label>Parada após (s)<input id="r_par_${id}" type="number" step="0.5" value="${esc(c.parada_s)}"></label>
+        <label>Perdidas p/ falha<input id="r_fal_${id}" type="number" value="${esc(c.falhas_limite)}"></label>
+        <label>Variação instável %<input id="r_ins_${id}" type="number" value="${esc(c.instab)}"></label>
+        <button onclick="salvaRitmo('${id}')">Salvar ritmo</button>
+      </div>
+    </details>
+    <div class="acoes"><button class="perigo" onclick="excluiMaquina('${id}')">Excluir máquina</button></div>
+  </div>`;
+}
+
+function renderiza() {
+  const sig = JSON.stringify(maquinas.map(assinaturaDe));
+  if (sig !== assinatura) {
+    assinatura = sig;
+    $('maquinas').innerHTML = maquinas.length ? maquinas.map(cartao).join('') : '<div class="card sub">Nenhuma máquina cadastrada. Crie uma acima.</div>';
+  }
+  atualizaVivo();
+}
+
+function atualizaVivo() {
+  for (const m of maquinas) {
+    const st = $('st-' + m.id);
+    if (st) {
+      st.textContent = STATUS[m.status] || m.status;
+      st.classList.toggle('on', m.placa_ha != null && m.placa_ha < 10);
+    }
+    for (const s of m.cfg.sensores || []) {
+      const v = sensores.find((x) => x.id === s.id);
+      if ($('ha-' + s.id)) $('ha-' + s.id).textContent = v ? HA(v.ultimo_ha) : '—';
+      if ($('nv-' + s.id)) $('nv-' + s.id).textContent = v ? NIVEL(v.estado) : '—';
+    }
+  }
+}
+
+function atualizaTabela() {
+  $('tb_sens').innerHTML = sensores.length
+    ? sensores.map((s) => `<tr><td><b>${esc(s.id)}</b></td><td>${esc(s.topico)}</td><td>${HA(s.ultimo_ha)}</td><td>${NIVEL(s.estado)}</td>
+        <td>${s.maquina ? esc(s.maquina) + ' <span class="papel ' + esc(s.papel) + '">' + esc(s.papel) + '</span>' : '<span style="color:var(--atencao)">não atribuído</span>'}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="sub">Nenhum sensor recebido ainda. Ligue a PLC32 ou rode o simulador.</td></tr>';
+  $('nao_atrib').innerHTML = sensores.filter((s) => !s.maquina).map((s) => `<option value="${esc(s.id)}">`).join('');
+}
+
+async function carrega() {
+  try {
+    maquinas = await api('GET', '/api/maquinas');
+    sensores = await api('GET', '/api/sensores');
+    renderiza();
+    atualizaTabela();
+  } catch (_) { /* servidor fora do ar: tenta de novo no proximo ciclo */ }
+}
+
+async function acao(fn) {
+  try { await fn(); await carrega(); } catch (e) { alert(e.message); }
+}
+
+function criaMaquina() {
+  $('erro_nova').textContent = '';
+  api('POST', '/api/maquinas', { nome: $('n_nome').value || 'Nova máquina', spm: +$('n_spm').value, tol: +$('n_tol').value })
+    .then(() => { $('n_nome').value = ''; carrega(); })
+    .catch((e) => { $('erro_nova').textContent = e.message; });
+}
+
+const adicionaSensor = (id) => acao(() => api('POST', '/api/maquinas/sensores', {
+  maquina: id, sensor: $('as_id_' + id).value.trim(), papel: $('as_papel_' + id).value, nome: $('as_nome_' + id).value.trim(),
+}));
+
+const removeSensor = (mid, sid) => acao(() => api('DELETE', '/api/maquinas/sensores?maquina=' + encodeURIComponent(mid) + '&sensor=' + encodeURIComponent(sid)));
+
+const salvaRitmo = (id) => acao(() => api('POST', '/api/maquinas', {
+  id, nome: $('r_nome_' + id).value, spm: +$('r_spm_' + id).value, tol: +$('r_tol_' + id).value,
+  parada_s: +$('r_par_' + id).value, falhas_limite: +$('r_fal_' + id).value, instab: +$('r_ins_' + id).value,
+}));
+
+const excluiMaquina = (id) => {
+  if (confirm('Excluir a máquina "' + id + '"? Os sensores dela voltam a ficar não atribuídos.')) {
+    acao(() => api('DELETE', '/api/maquinas?id=' + encodeURIComponent(id)));
+  }
+};
+
+function alternaTema() {
+  const l = $('tema'), novo = l.getAttribute('href').includes('moderno') ? 'classico' : 'moderno';
+  l.href = '/estilo-' + novo + '.css';
+  try { localStorage.setItem('tema', novo); } catch (_) { /* navegador sem armazenamento */ }
+}
+
+carrega();
+setInterval(carrega, 2000);
+</script>
+</body></html>

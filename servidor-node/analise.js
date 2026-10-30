@@ -64,6 +64,7 @@ class Maquina {
     this._min = null;
     this._m = { batidas: 0, perdidas: 0, duplas: 0 };
     this.ruidoPlaca = 0;
+    this.primeira = 0; // instante da primeira batida desde o ultimo reset (precisao melhor que o minuto do CSV)
     this._dupPend = 0;
     this._dupAlerta = 0.0;
   }
@@ -184,6 +185,7 @@ class Maquina {
     }
 
     this.total += 1;
+    if (!this.primeira) this.primeira = t;
     this._m.batidas += 1;
     this.runHits += 1;
     pushMax(this.hits, t, 3000);
@@ -257,6 +259,11 @@ class Maquina {
     return [alertas, linha];
   }
 
+  // Minuto ainda aberto (ainda nao gravado em producao.csv), para o relatorio incluir o que esta acontecendo agora
+  parcial() {
+    return this._min === null ? null : { minuto: this._min * 60, ...this._m, primeira: this.primeira };
+  }
+
   status(agora) {
     if (this.parada) return 'parada';
     if (!this.ultimo || agora - this.ultimo > this.cfg.parada_s) return 'ociosa';
@@ -279,6 +286,7 @@ class Maquina {
       duplas: this.duplas,
       ruido: this.ruidoPlaca,
       ultimos_60s: this.hits.filter((h) => agora - h <= 60).length,
+      falhas_60s: this.falhas.length, // batidas perdidas na janela de 60 s (compara com falhas_limite)
       ciclo: this.intervalos.length ? Math.round(this.intervalos[this.intervalos.length - 1] * 1000) / 1000 : null,
       ultimo_ha: this.ultimo ? r1(agora - this.ultimo) : null,
       ativos: Object.values(this.ativos).map((v) => v[1]),

@@ -1,0 +1,80 @@
+/* Estilos dos componentes novos, comuns aos dois temas (usam as variáveis de cor do tema ativo). */
+
+/* Botão em forma de link (ex.: "Relatório") */
+a.btn{text-decoration:none;display:inline-block;cursor:pointer}
+
+/* Legendas dos gráficos */
+.leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin:6px 0 8px;font-size:12px;color:var(--mut)}
+.leg span{display:inline-flex;align-items:center;gap:6px}
+.leg .d{width:12px;height:12px;border-radius:50%;display:inline-block}
+.leg .d.vazio{background:transparent;border:2px dashed var(--falha)}
+.leg .t{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:9px solid var(--atencao);display:inline-block}
+.dica{font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)}
+
+/* Dica ao passar o mouse nos gráficos */
+#tip{position:fixed;display:none;z-index:50;max-width:280px;pointer-events:none;background:rgba(15,20,35,.96);color:#fff;
+  border:1px solid rgba(255,255,255,.18);padding:6px 10px;border-radius:8px;font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+
+/* Medidores dos parâmetros */
+.par{padding:10px;border-radius:12px;border:1px solid transparent;transition:border-color .2s,background .2s}
+.par small{display:block;margin-top:8px;font-size:12px;color:var(--mut)}
+.par.alerta{border-color:var(--falha);background:rgba(255,77,77,.08);animation:pulsa 1s ease-in-out infinite}
+.par.alerta small{color:var(--falha)}
+@keyframes pulsa{50%{box-shadow:0 0 0 3px rgba(255,77,77,.35)}}
+.med{position:relative;height:12px;margin-top:10px;border-radius:99px;background:rgba(127,127,127,.25)}
+.med .enche{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:99px;background:var(--ok);transition:width .3s,background .3s}
+.med .faixa{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:4px;background:rgba(46,204,113,.45)}
+.med .marc{position:absolute;top:-3px;bottom:-3px;left:0;width:4px;margin-left:-2px;border-radius:3px;background:#fff;
+  box-shadow:0 0 6px rgba(0,0,0,.6);transition:left .3s}
+.med[data-tipo=faixa] .enche{display:none}
+.med[data-tipo=barra] .faixa,.med[data-tipo=barra] .marc{display:none}
+
+/* Faixa de TESTE (simulador) */
+#sim{border-radius:14px;padding:14px 18px;margin-bottom:12px;border:1px dashed var(--medindo);background:rgba(96,165,250,.10)}
+#sim[hidden]{display:none}
+.sim-top{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.sim-tag{background:var(--medindo);color:#001;font-weight:800;font-size:12px;letter-spacing:1px;padding:3px 10px;border-radius:99px}
+#sim_tempo{color:var(--mut);font-size:13px}
+.res{margin-left:auto;font-weight:800}
+.res.ok{color:var(--ok)}.res.atencao{color:var(--atencao)}.res.falha{color:var(--falha)}
+#sim_desc{margin-top:6px}
+.sim-bar{height:6px;border-radius:99px;background:rgba(127,127,127,.25);margin:10px 0;overflow:hidden}
+.sim-bar i{display:block;height:100%;width:0;background:var(--medindo);transition:width .5s linear}
+.sim-chk{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{font:12px ui-monospace,Consolas,monospace;padding:3px 10px;border-radius:99px;border:1px solid var(--line)}
+.chip.pend{color:var(--mut)}
+.chip.ok{color:var(--ok);border-color:var(--ok)}.chip.ok::before{content:"✓ "}
+.chip.falha{color:var(--falha);border-color:var(--falha)}.chip.falha::before{content:"✗ "}
+.chip.extra{color:var(--atencao);border-color:var(--atencao)}
+#sim_esp{margin-top:8px;color:var(--mut);font-size:13px}
+#sim_passo{margin:12px 0 4px;font-size:22px;font-weight:800;line-height:1.25;color:var(--tx)}
+#sim_passo[hidden],#sim_cont[hidden]{display:none}
+#sim_cont{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--medindo)}
+#modoteste{background:rgba(96,165,250,.18)!important;color:#bcd8ff!important;border:1px solid rgba(96,165,250,.55)!important}
+#modoteste[hidden]{display:none}
+#sim_aviso{margin-top:6px;font-size:12px;color:var(--atencao)}
+
+/* Relatório parcial (página /relatorio) */
+.rel-barra{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.rel-barra select{width:auto}
+.kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:12px}
+.kpi .val{font-size:32px}
+.kpi .sub b{color:var(--tx)}
+.veredito{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.anel{--p:0;--c:var(--ok);width:132px;height:132px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:conic-gradient(var(--c) calc(var(--p)*1%),rgba(127,127,127,.25) 0)}
+.anel div{width:100px;height:100px;border-radius:50%;background:var(--bg);display:grid;place-items:center;text-align:center;line-height:1.1}
+.anel b{font-size:28px;display:block}.anel small{font-size:11px;color:var(--mut)}
+.sel-ok{color:var(--ok)}.sel-atencao{color:var(--atencao)}.sel-baixo{color:var(--falha)}
+table.tab{width:100%;border-collapse:collapse;font-size:14px}
+table.tab th,table.tab td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+table.tab th{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+.notas{font-size:13px;color:var(--mut);line-height:1.6}
+.notas li{margin-bottom:4px}
+@media print{
+  :root{--bg:#fff;--card:#fff;--tx:#111;--mut:#555;--line:#ccc}
+  body{background:#fff!important;color:#111}
+  .rel-barra button,.rel-barra select,.rel-barra a.btn,#tip{display:none!important}
+  .card{box-shadow:none!important;backdrop-filter:none!important;border:1px solid #ccc!important;break-inside:avoid}
+  .anel div{background:#fff}
+}

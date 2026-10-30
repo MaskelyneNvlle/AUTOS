@@ -13,7 +13,7 @@ Servidor que recebe as batidas da prensa enviadas pela PLC32 por MQTT, analisa o
 5. [A dashboard: o que cada coisa significa](#5-a-dashboard-o-que-cada-coisa-significa)
 6. [Como a análise decide (regras e números)](#6-como-a-análise-decide-regras-e-números)
 7. [Testes sem a PLC: simulando batidas (passo a passo)](#7-testes-sem-a-plc-simulando-batidas-passo-a-passo)
-8. [Teste na bancada com a PLC e o sensor reais](#8-teste-na-bancada-com-a-plc-e-o-sensor-reais)
+8. [Testes de bancada com a PLC32 e os sensores reais](#8-testes-de-bancada-com-a-plc32-e-os-sensores-reais)
 9. [Firmware da PLC32](#9-firmware-da-plc32)
 10. [Arquivos de dados e API HTTP](#10-arquivos-de-dados-e-api-http)
 11. [Solução de problemas](#11-solução-de-problemas)
@@ -46,10 +46,16 @@ Fluxo de uma batida: o sensor muda de LOW para HIGH → a PLC publica `1` em `pr
 | `server.js` | Servidor: broker MQTT (aedes), HTTP, dashboard em tempo real (SSE), gravação de CSV. |
 | `analise.js` | Análise de ritmo de uma máquina (parada, batida perdida, dupla, ritmo, instabilidade). Porte de `analise.py`. |
 | `maquinas.json` | Ritmo programado: batidas/min, tolerância, tempo de parada etc. Também editável pela dashboard. |
-| `public/index.html` | A dashboard (a mesma página do servidor Python). |
+| `public/index.html` | A dashboard (estrutura HTML e JavaScript dos gráficos e do tempo real). |
+| `public/estilo-moderno.css`, `public/estilo-classico.css` | Os dois visuais da dashboard (botão **Tema**). `estilo-comum.css` tem os componentes novos (medidores, faixa de teste, legendas). |
+| `public/relatorio.html` | Página do **relatório parcial** (`/relatorio`). Ver [seção 5.1](#51-relatório-parcial-de-desempenho). |
+| `public/sensores.html` | Página **Máquinas e sensores** (`/sensores`): cria máquinas e atribui sensores a elas. Guia: [`../docs/MAQUINAS_E_SENSORES.md`](../docs/MAQUINAS_E_SENSORES.md). |
+| `relatorio.js` | Cálculo do relatório (disponibilidade, desempenho, paradas...) a partir de `producao.csv`, `alarmes.csv` e do minuto em andamento. |
+| `teste_relatorio.js` | Teste automático do cálculo do relatório com dados sintéticos. |
 | `simular_batidas.js` | **Simulador da PLC**: publica cenários prontos (normal, batida perdida, ruído, parada…) no broker. Ver [seção 7](#7-testes-sem-a-plc-simulando-batidas-passo-a-passo). |
 | `teste_analise.js` | Teste automático da lógica de análise (12 cenários, sem rede). |
 | `teste_mqtt_local.js` | Teste automático da separação de tópicos (estado, heartbeat e batida) contra um servidor de teste. |
+| `teste_bancada.js` | **Roteiros guiados do Teste A de bancada** (sensor NPN real na PLC32): polaridade, contagem, ritmo e repique, com o resultado na dashboard. Ver [seção 8.3](#83-comandos-dos-roteiros). |
 | `producao.csv`, `alarmes.csv` | Histórico (criados na primeira gravação; ver [seção 10](#10-arquivos-de-dados-e-api-http)). |
 | `package.json` | Dependências: `aedes` (broker) e `mqtt` (cliente, usado no modo externo e nos testes). |
 | `dados_teste/` | Criada nos testes de simulação; pode ser apagada a qualquer momento. |
@@ -142,9 +148,24 @@ e, quando a PLC conectar, `[MQTT] cliente conectado: PLC32-Prensa-xxxxxxxx`.
 
 **Cartões:** *Batidas por minuto* (ritmo atual, mediana dos últimos 20 intervalos) com a faixa programada; *Batidas (total)* e quantas no último minuto; *Estado do sensor* (ACIONADO/REPOUSO, último estado recebido; não conta produção); *Batidas perdidas*; *Batidas duplas* (pulsos extras filtrados); *Variação do ritmo* (desvio entre intervalos, em %) e o tempo do último ciclo.
 
-**Gráficos:** o primeiro mostra batidas/min nos últimos 5 minutos, com a faixa verde do ritmo programado. O segundo mostra cada batida nos últimos 60 s como uma barra vertical; **barra vermelha = batida com problema** (perdida ou dupla).
+**Gráficos** (passe o mouse sobre os marcadores para ver detalhes; cada gráfico tem sua legenda):
+1. *Batidas por minuto — últimos 5 min*: linha laranja do ritmo, faixa verde do ritmo programado, **faixa vermelha** nos períodos de máquina parada e um **triângulo no topo com linha tracejada** em cada alerta (amarelo = atenção, vermelho = falha, verde = informação). Ao passar o mouse no triângulo aparece o horário e a mensagem do alerta.
+2. *Intervalo entre batidas — últimos 60 s*: cada ponto é o tempo entre duas batidas. Verde = no ritmo; amarelo = fora da tolerância; **vermelho = perdida** (acima de 1,6× o normal); **magenta = pulso duplo** (abaixo de 0,5×). As linhas tracejadas mostram esses limites. É o gráfico que mais ajuda a ver *por que* um alerta disparou.
+3. *Sinal do sensor — últimos 60 s*: uma barra por batida. Vermelha = batida que veio depois de uma perdida; magenta = pulso extra; **contorno tracejado com “?” = onde a batida que faltou deveria estar** (posição estimada).
 
-**Ritmo programado desta máquina (formulário):** altere e clique *Salvar*; vale na hora e fica gravado em `maquinas.json`.
+**Faixa de TESTE (simulação):** quando o simulador está rodando, aparece uma faixa azul no topo com o nome do cenário, a barra de progresso, o resultado esperado e a lista de alertas esperados, que vão ficando verdes (✓) conforme chegam. Ao final mostra **APROVADO**, **APROVADO, com alertas extras** (amarelo) ou **REPROVADO — faltou: …**. Nos gráficos, o período do teste aparece com um fundo azul. A faixa avisa que os números são da simulação. Ver [seção 7.3](#73-simulação-visual-de-batidas-o-teste-que-mostra-os-resultados).
+
+**Ritmo programado desta máquina (formulário com medidores ao vivo):** altere e clique *Salvar*; vale na hora e fica gravado em `maquinas.json`. Abaixo de cada campo há um **medidor** que mostra o valor medido agora contra o parâmetro, e a caixa fica com borda vermelha pulsando quando o limite é passado:
+
+| Campo | Medidor mostra |
+|---|---|
+| Batidas/min programadas | Marcador branco = ritmo atual; faixa verde = tolerância. |
+| Tolerância (%) | Marcador = desvio atual do ritmo (centro = exatamente o programado); faixa verde = ± tolerância. |
+| Parada após (s) | Barra enchendo = tempo desde a última batida; chega a 100% (vermelho) quando a máquina é considerada parada. |
+| Perdidas p/ FALHA (60 s) | Barra = batidas perdidas na janela de 60 s ÷ limite. |
+| Variação p/ instável (%) | Barra = variação atual do ritmo ÷ limite. |
+
+Valores de cada campo:
 
 | Campo | Padrão | Significado |
 |---|---|---|
@@ -157,6 +178,37 @@ e, quando a PLC conectar, `[MQTT] cliente conectado: PLC32-Prensa-xxxxxxxx`.
 **Alertas:** lista abaixo; amarelo = atenção, vermelho = falha/parada, verde = informação (retomada, normalizou). Todo alerta também é gravado em `alarmes.csv`.
 
 **Zerar contadores:** zera total, perdidas, duplas e histórico em memória da máquina (os CSV já gravados não são apagados).
+
+**Botões do topo:** *Relatório* (abre o relatório parcial), *Tema* (moderno ⇄ clássico; a escolha fica gravada no navegador), *Tela cheia* (para deixar numa TV na linha) e *Zerar contadores*.
+
+### 5.1 Relatório parcial de desempenho
+
+Abra pelo botão **Relatório** da dashboard ou direto em `http://localhost:8085/relatorio`. Ele resume como a prensa se comportou num período e atualiza sozinho a cada 10 s.
+
+**Período:** últimos 15 min, 1 h, 4 h, 8 h (turno), hoje (desde 00:00) ou últimas 24 h.
+
+**O que mostra:**
+
+| Indicador | Como é calculado |
+|---|---|
+| **Disponibilidade** | Tempo operando ÷ tempo observado. Tempo parado = períodos entre o alerta “Máquina PAROU” e a retomada. |
+| **Desempenho** | Batidas feitas ÷ batidas que seriam feitas no ritmo programado durante o tempo operando (acima de 100% = mais rápida que o programado). |
+| **Eficiência de ritmo** | Disponibilidade × desempenho (desempenho limitado a 100%). **BOM** ≥ 85%, **ATENÇÃO** ≥ 65%, **BAIXO** abaixo disso. Exibida no anel grande. |
+| Batidas, ritmo médio operando, pico por minuto | Soma e médias do período, contra o esperado no ritmo programado. |
+| Paradas | Quantidade, tempo total, maior e média; lista das mais recentes com início, fim e duração (parada em andamento aparece como “em andamento”). |
+| Tempo médio entre paradas | Tempo operando ÷ número de paradas. |
+| Perdidas e pulsos duplos | Quantidade e percentual (duplas altas indicam ruído no sinal do sensor). |
+| Alertas no período | Contagem por tipo. |
+| Gráfico por minuto | Uma barra por minuto: verde = dentro da faixa programada; amarelo = abaixo/acima (inclui minutos parciais, como o de início e fim de uma rodada); marca vermelha = nenhuma batida. |
+
+**Botões:** *Atualizar*, *Baixar resumo (CSV)* (`/api/relatorio?formato=csv`, abre no Excel) e *Imprimir / PDF* (o navegador gera um PDF; o layout de impressão é claro e sem botões).
+
+**Limites que você precisa conhecer:**
+- É um índice de **ritmo e paradas**. Não mede refugo/qualidade das peças, então não é um OEE completo.
+- Os dados vêm do que o servidor grava (`producao.csv`, `alarmes.csv`). O servidor registra `servidor_iniciado` no `alarmes.csv` a cada partida; se ficou desligado mais de 90 s, esse intervalo é **descontado** do tempo observado (e mostrado no relatório), em vez de virar parada.
+- O tempo observado começa no primeiro minuto com batidas do período. Uma parada só é registrada depois de a máquina ter feito pelo menos 10 batidas na rodada.
+- Perdidas e duplas são estimativas feitas a partir dos intervalos entre batidas.
+- Em simulações o relatório calcula normalmente; nos testes ele lê os arquivos de `dados_teste`, não os da produção.
 
 ## 6. Como a análise decide (regras e números)
 
@@ -182,7 +234,7 @@ Pontos que costumam surpreender:
 
 Há três níveis de teste. Faça na ordem; os dois primeiros são automáticos, o terceiro é visual e é o que mostra "como a dashboard reage".
 
-> Estes testes **não** comprovam o cabeamento do sensor, a Ethernet nem o firmware da PLC. Isso é a [seção 8](#8-teste-na-bancada-com-a-plc-e-o-sensor-reais).
+> Estes testes **não** comprovam o cabeamento do sensor, a Ethernet nem o firmware da PLC. Isso é a [seção 8](#8-testes-de-bancada-com-a-plc32-e-os-sensores-reais).
 
 ### 7.1 Teste da lógica de análise (automático, ~1 s)
 
@@ -240,6 +292,17 @@ node simular_batidas.js lista
 node simular_batidas.js normal
 ```
 O terminal mostra o que é o cenário e o resultado esperado, e termina com `Concluido: N batidas publicadas.`
+
+**O que a dashboard mostra durante a simulação (a parte visual do teste):**
+- **Faixa azul “SIMULAÇÃO”** no topo: nome do cenário, descrição, tempo decorrido (`15 / 26 s`), barra de progresso e o texto do resultado esperado. Os alertas esperados aparecem como etiquetas (`batida_perdida`…) que passam de cinza para **✓ verde** quando o alerta realmente chega. ~5 s depois do fim, o resultado: **APROVADO**, **APROVADO, com alertas extras** (algo além do esperado) ou **REPROVADO — faltou: …**.
+- **Nos três gráficos**, o período do teste fica sombreado em azul com o rótulo `teste: <cenário>`; as batidas perdidas aparecem como pontos vermelhos altos no gráfico de intervalos e como “?” tracejado no gráfico do sensor; paradas viram faixas vermelhas e cada alerta ganha um triângulo no gráfico de ritmo.
+- **Nas caixas de parâmetros**, os medidores reagem em tempo real: por exemplo, em `perdida` a barra *Perdidas p/ FALHA* sobe para 1/3; em `ritmo_baixo` o marcador do ritmo sai da faixa verde e a caixa pisca em vermelho; em `parada` a barra *Parada após* enche até 100%; em `instavel` a barra de variação passa do limite.
+- Os cartões piscam a cada batida (e o de perdidas/duplas quando for o caso).
+- Depois dos testes abra o **Relatório** (`http://localhost:8086/relatorio`) para ver o resumo do que foi simulado.
+
+> Cenários rodados em sequência (por exemplo `perdida; parada`) começam logo depois do anterior; a checagem ignora os 2 primeiros segundos de cada cenário para não confundir com o que sobrou do anterior. Para um resultado limpo, espere o anterior terminar e a faixa sumir (~30 s após o fim), ou use `tudo`, que deixa pausas de 12 s.
+>
+> Se o simulador for apontado para o servidor **real** (`--porta 1883`) a faixa avisa que são números de simulação, mas **os registros entram nos CSV da produção**. Evite.
 
 **Passo 5 — Zerar entre um cenário e outro** (botão **Zerar contadores** na dashboard, ou):
 ```powershell
@@ -301,29 +364,281 @@ Os tempos são aproximados (1 s de preparação no início e 3 s de silêncio no
 | Banner mostra OPERANDO NORMAL mas ritmo "baixo" ou "alto" | `--spm` do simulador diferente do *Batidas/min programadas* da dashboard. |
 | `EADDRINUSE` ao subir o servidor de teste | Já existe outro servidor de teste aberto, ou outra coisa usa essas portas. Feche o anterior ou troque as portas. |
 
-## 8. Teste na bancada com a PLC e o sensor reais
+## 8. Testes de bancada com a PLC32 e os sensores reais
 
-Pré-requisitos: servidor rodando (seção 4) e firewall liberado (3.4).
+Esta seção valida o que as simulações da seção 7 **não** conseguem provar: o cabeamento do sensor, a polaridade do sinal na PLC32, a Ethernet e o firmware de verdade. Há três níveis de teste:
 
-1. **Conferir a ligação da PLC:** ligue a PLC32 na mesma rede. No monitor serial (115200) devem aparecer a conexão Ethernet, o IP recebido e `Conectado ao broker MQTT.` No servidor: `[MQTT] cliente conectado: PLC32-Prensa-…`.
-   - Se aparecer `Falha MQTT. Estado PubSubClient: -2`, o TCP não chegou ao servidor (rede/firewall/IP). Ver [seção 11](#11-solução-de-problemas).
-2. **Conferir o painel:** `http://10.0.1.202:8085/api/health` deve ter `"placaOnline": true`. Na dashboard, a etiqueta fica `placa ativa (MQTT (prensa/heartbeat))` e o *Estado do sensor* mostra ACIONADO ou REPOUSO.
-3. **Teste de contagem:** clique em *Zerar contadores*. Acione e solte o sensor **exatamente 10 vezes**, devagar (uma por segundo). O total deve ficar em **10**. Repita com 30. Se o total diferir, anote quanto e como (pulsos extras = duplas?).
-4. **Teste de estado × evento:** mantenha o sensor acionado e solto sem pulsar: o *Estado do sensor* muda e **o total não aumenta**. Só a transição LOW → HIGH conta.
-5. **Teste de ritmo real:** com a prensa funcionando, confira o *Batidas por minuto* com uma contagem manual de 15 s (× 4) ou com o contador da máquina.
-6. **Teste de parada:** pare a prensa: em ~3 s o banner deve virar MÁQUINA PARADA e um alerta vermelho deve ser gravado.
-7. **Teste de comunicação:** desligue o cabo de rede da PLC: em ~10 s o banner deve virar SEM COMUNICAÇÃO. Religue: ele volta sozinho.
-8. **Teste de queda do servidor:** feche o servidor e abra de novo: a PLC deve reconectar sozinha em poucos segundos.
-9. **Teste de ruído elétrico:** com a prensa em operação, observe *Batidas duplas*. Muitas duplas indicam ruído ou repique no sinal (blindagem, aterramento, filtro) e devem ser tratadas na instalação.
+| Nível | O que gera as batidas | Para que serve |
+|---|---|---|
+| **Teste A** | Você, passando um alvo na frente do **sensor NPN** ligado na PLC32 | Provar ligação, polaridade, contagem exata e ausência de repique |
+| **Teste B** | A **Wecon LX3V-2416MT** (saída a transistor NPN em oscilador) ligada na entrada da PLC32 | Provar o ritmo, as falhas e as paradas de forma repetível |
+| **Teste C** | A **prensa real** | Validação final, com os dados de produção |
 
-> Os dados de bancada servem para validar o sistema; **não** o tratam como contagem industrial certificada (QoS 0, sem persistência na PLC).
+Os roteiros automáticos (`teste_bancada.js`) cobrem os testes A e B. Ligações elétricas, pinagem e desenhos: [`../docs/BANCADA.md`](../docs/BANCADA.md).
+
+### 8.1 Antes de começar (checklist)
+
+| Item | Como conferir |
+|---|---|
+| Sensor NPN de 3 fios | Marrom = +, azul = −, **preto = sinal** |
+| Fonte de 24 V (ou a saída de 24 V da Wecon, modelos AC) | Mesma fonte para a PLC32 e o sensor, **0 V comum** |
+| Ligação na PLC32 | `+24 V` em **V+**, **Com** e fio marrom; `0 V` em **V−** e fio azul; fio **preto em I34** (GPIO34). Se estiver em I39 ou I35, o firmware **não** lê |
+| Cabo de rede | No RJ45 **Ethernet** da PLC32 (o outro é I2C isolado: ligar a rede nele pode danificar o isolador) até a rede do servidor |
+| PLC32 gravada | `config.h` com `mqtt_server = "10.0.1.202"` e `pinoSensor = 34` (seção 9) |
+| Servidor | Computador `10.0.1.202` ligado, Node instalado, firewall liberado (seções 3.4 e 3.5) |
+| Alvo metálico | Para o sensor indutivo; tenha-o **na mão** antes de iniciar um roteiro |
+
+> A PLC32 só conversa com a porta **1883** do `10.0.1.202`. Por isso, para testar com ela sem sujar a produção, o servidor **normal** é trocado pelo servidor em **modo teste** (próxima seção).
+
+### 8.2 Preparar o ambiente em modo teste
+
+Use **dois terminais** (PowerShell) abertos na pasta `servidor-node`.
+
+**Terminal 1 — servidor em modo teste**
+
+1. Se o servidor normal estiver rodando, pare-o com `Ctrl+C` (senão a porta 1883 fica ocupada).
+2. Inicie o servidor de teste:
+   ```powershell
+   node server.js --teste
+   ```
+3. Confira as linhas abaixo e **deixe a janela aberta**:
+   ```
+   Dashboard: http://localhost:8085
+   Broker MQTT: embutido (aedes) na porta 1883
+   *** MODO TESTE: os dados ficam isolados em ...\servidor-node\dados_teste (nao vao para a producao) ***
+   [MQTT] broker embutido ouvindo em 0.0.0.0:1883
+   [MQTT] cliente conectado: PLC32-Prensa-xxxxxxxx      <- aparece quando a PLC32 conecta
+   ```
+4. Se a PLC32 não aparecer em ~30 s, veja a [seção 8.9](#89-problemas-comuns-nos-testes-de-bancada).
+
+**Navegador**
+
+5. Abra `http://localhost:8085`. Devem aparecer: a etiqueta azul **MODO TESTE · dados isolados** e, em verde, **placa ativa (MQTT (prensa/heartbeat))**.
+
+**Terminal 2 — conferir a conexão antes de testar (opcional, mas recomendado)**
+
+```powershell
+Invoke-RestMethod http://localhost:8085/api/health
+```
+Deve mostrar `"placaOnline": true`. E para ver o estado do sensor agora:
+```powershell
+$m = (Invoke-RestMethod http://localhost:8085/api/state).maquinas.prensa1; "sensor=$($m.sensor_estado)  total=$($m.total)  duplas=$($m.duplas)"
+```
+`sensor=0` ou `sensor=1` indica que a PLC já mandou o estado. `desconhecido` quer dizer que o estado ainda não chegou (a PLC só publica o estado ao conectar e quando ele muda).
+
+> No Windows deste computador a execução de scripts `.ps1` é bloqueada. Todos os comandos desta seção usam `node ...` e não são afetados.
+
+### 8.3 Comandos dos roteiros
+
+Formato geral (no **Terminal 2**):
+```powershell
+node teste_bancada.js <roteiro> [opções]
+```
+
+| Comando | Duração | O que você faz |
+|---|---|---|
+| `node teste_bancada.js lista` | — | Só lista os roteiros |
+| `node teste_bancada.js sinal` | 20 s | Afasta o alvo (6 s) → aproxima e segura (8 s) → afasta (6 s) |
+| `node teste_bancada.js contagem` | até ~50 s | Passa o alvo **10 vezes**, devagar |
+| `node teste_bancada.js contagem --n 30` | até ~150 s | Passa o alvo 30 vezes |
+| `node teste_bancada.js ritmo` | 60 s | Deixa a Wecon (Teste B) ou a prensa gerar batidas |
+| `node teste_bancada.js ritmo --tempo 120` | 120 s | Idem, por 2 minutos |
+| `node teste_bancada.js repique` | 30 s | Segura o alvo **parado** na borda da zona de detecção |
+| `node teste_bancada.js repique --tempo 60` | 60 s | Idem, por 60 s |
+| `node teste_bancada.js tudo` | até ~2 min | `sinal` + `contagem` + `repique`, com pausa de 8 s entre eles |
+
+**Opções**
+
+| Opção | Padrão | Significado |
+|---|---|---|
+| `--n <número>` | 10 | Quantas passagens do alvo no roteiro `contagem` |
+| `--tempo <segundos>` | 60 no `ritmo`, 30 nos demais | Duração do `ritmo` e do `repique` |
+| `--porta <porta>` | 8085 | Porta HTTP do servidor |
+| `--host <endereço>` | localhost | Computador do servidor |
+| `--dados <pasta>` | `dados_teste` | Onde gravar `resultados_bancada.csv` |
+| `--forcar` | — | Permite rodar **fora do modo teste** (os dados vão para a produção). Não use |
+
+**Código de saída** (útil para automatizar): `0` = tudo aprovado, `1` = algum reprovado, `2` = erro (servidor fora do ar, não está em modo teste ou PLC sem comunicação).
+
+**Proteções**: o roteiro **não roda** se o servidor não estiver em modo teste ou se a PLC32 estiver sem comunicação (mostra a mensagem e sai com código 2).
+
+### 8.4 Passo a passo de cada roteiro
+
+#### `sinal` — polaridade e ciclo (rode este primeiro)
+
+Linha do tempo (as instruções aparecem na dashboard e no terminal):
+
+| Passo | Tempo | Você faz | O roteiro anota |
+|---|---|---|---|
+| 1/3 | 0–6 s | **Alvo longe** do sensor, parado | Nível do sinal em repouso |
+| 2/3 | 6–14 s | **Aproxima o alvo** (LED do sensor acende) e **mantém parado** | Nível acionado e batidas contadas |
+| 3/3 | 14–20 s | **Afasta** o alvo e deixa parado | Batidas contadas e pulsos duplos |
+
+Critérios (cada um vira uma etiqueta ✓ ou ✗ na dashboard):
+1. **O estado muda** ao aproximar o alvo (repouso ≠ acionado).
+2. **Polaridade**: normal quando repouso = nível 0 e acionado = nível 1 (como o firmware espera). Se vier o contrário, é *polaridade invertida*.
+3. **1 batida por ciclo** (aproximar + afastar). A batida conta na *subida* do sinal; com polaridade invertida ela passa a contar na saída do alvo, mas continua 1 por ciclo.
+4. **Sem pulsos duplos** (repique).
+
+Exemplo de **APROVADO**:
+```
+--- RESULTADO: APROVADO ---
+  [OK] Estado muda ao aproximar o alvo (nível 0 (LOW) → nível 1 (HIGH))
+  [OK] Polaridade normal: acionado = nível 1, como o firmware espera
+  [OK] 1 batida por ciclo (na aproximação)
+  [OK] Sem pulsos duplos
+```
+Exemplo de **REPROVADO** (resultado real de uma bancada em que o sinal não chegou à PLC):
+```
+--- RESULTADO: REPROVADO ---
+  [FALHA] O estado NÃO mudou ao aproximar o alvo: confira a ligação (Com no +24 V, sinal no I34) e o LED Dp2
+  [FALHA] Polaridade não avaliada (sem mudança de estado)
+  [FALHA] Esperada 1 batida por ciclo, contou 0
+  [OK] Sem pulsos duplos
+```
+
+#### `contagem` — contagem exata
+
+1. Rode `node teste_bancada.js contagem --n 10`.
+2. Passe o alvo na frente do sensor **10 vezes, devagar** (~1 por segundo). A dashboard mostra **Contagem: 3 / 10**, etc.
+3. Ao chegar em 10, o roteiro entra em **4 s de conferência**: afaste o alvo e **não mexa**. Se aparecer contagem extra, é repique.
+4. Critérios: contagem **exatamente igual** a `--n`; **sem batidas extras** depois de parar; **sem pulsos duplos**.
+
+Tempo máximo para completar as passagens: `max(40 s, n × 5 s)`. Se o tempo acabar antes, o resultado é REPROVADO com "Faltaram X batida(s)".
+
+#### `ritmo` — com a Wecon (Teste B) ou a prensa
+
+1. Deixe quem gera as batidas **já funcionando** no ritmo desejado (na Wecon, por exemplo, o oscilador K2 liga + K2 desliga com temporizadores de 100 ms = 150 batidas/min; ver [`../docs/BANCADA.md`](../docs/BANCADA.md)).
+2. Rode `node teste_bancada.js ritmo --tempo 60`.
+3. Não precisa mexer em nada: o roteiro mede por 60 s. A dashboard mostra ritmo e batidas contadas.
+4. Critérios: **ritmo médio dentro da faixa programada** (`spm ± tolerância`, ex.: 140–171/min para 155 ±10 %); **sem batidas perdidas**; **sem pulsos duplos**; **variação** abaixo do limite (25 % por padrão).
+5. Para testar falhas de propósito, mude o programa da Wecon (intervalo maior = batida perdida; saída parada = parada; pulso curto extra = duplo disparo) e rode de novo.
+
+> O ritmo programado vem da dashboard (card *Ritmo programado*). Se a Wecon gera 150/min e o programado é 155, está dentro da tolerância; se gera 100/min, o teste reprova (como esperado).
+
+#### `repique` — o sensor não pode gerar pulsos sozinho
+
+1. Rode `node teste_bancada.js repique --tempo 30`.
+2. Segure o alvo **parado** na **borda da distância de detecção** (onde o LED do sensor "fica na dúvida"), sem encostar e sem balançar, durante os 30 s.
+3. Critérios: **nenhuma batida** e **nenhum pulso duplo** no período. Qualquer contagem aqui indica sinal instável (sensor, cabo, aterramento, fonte).
+
+#### `tudo`
+
+`node teste_bancada.js tudo` roda `sinal`, `contagem` e `repique` em sequência (pausa de 8 s entre eles) e termina com um resumo:
+```
+=== RESUMO ===
+  sinal      APROVADO
+  contagem   APROVADO
+  repique    APROVADO
+```
+
+### 8.5 O que a dashboard mostra durante o teste
+
+- Etiqueta **MODO TESTE · dados isolados** no topo (confirma que nada vai para a produção).
+- Faixa azul **TESTE DE BANCADA** com: nome do roteiro e descrição; `passo 2/3 · 5 s` (andamento e tempo restante); **instrução do passo em letras grandes**; barra de progresso; **contagem ao vivo** (`Contagem: 7 / 10`); **critérios** (cinza = aguardando, ✓ verde = ok, ✗ vermelho = falhou); texto "Esperado"; e, no fim, **APROVADO** ou **REPROVADO**.
+- O resultado **fica na tela por 3 minutos** depois do fim.
+- Nos gráficos, o período do teste fica sombreado em azul (`teste: sinal`), e cada batida real do sensor aparece nos gráficos de intervalo e de sinal.
+- Cartões: *Estado do sensor* (ACIONADO/REPOUSO) acompanha o sinal real; *Batidas (total)* pisca a cada batida.
+- Cada resultado é salvo em `dados_teste/resultados_bancada.csv` (colunas `data_hora;teste;resultado;criterios`).
+
+### 8.6 Interpretar o resultado e corrigir
+
+| Resultado | Causa provável | O que fazer |
+|---|---|---|
+| **O estado NÃO mudou** | O alvo não foi movido a tempo; sinal no terminal errado; sem 24 V no Com; 0 V não comum; sensor sem alimentação | Repita com o alvo na mão. Observe o **LED do sensor** e o **LED Dp2** da PLC32 (entrada 2). Dp2 acende e o estado não muda → problema de nível/firmware; Dp2 não acende → ligação (fio em **I34**, Com no +24 V, 0 V comum) |
+| **Polaridade INVERTIDA** | O GPIO34 lê nível 0 com o sensor acionado (comum com o optoacoplador) | A contagem funciona, mas ACIONADO/REPOUSO ficam trocados. Hoje o firmware não tem opção para inverter: peça a alteração em `main.cpp`/`config.h` e rode `sinal` de novo |
+| **Esperada 1 batida por ciclo, contou 0** | Só o estado mudou mas a batida não foi contada, ou o estado nunca mudou | Reveja o resultado acima; confira no monitor serial se aparece `Evento de batida pendente` |
+| **Contagem: faltaram X** | Passagens rápidas demais ou fora da zona de detecção | Passe mais devagar e mais perto; confira a distância de detecção do sensor |
+| **Contagem: sobraram X** | Repique ou ruído no sinal | Veja os pulsos duplos; confira cabo, blindagem, aterramento, distância |
+| **Pulsos duplos > 0** | Repique do sensor, cabo longo/sem blindagem, fonte ruidosa | Cabo blindado, 0 V comum, afastar de cabos de potência, ajustar a distância de detecção |
+| **Ritmo fora da faixa** | O gerador (Wecon/prensa) não está no ritmo programado | Ajuste o gerador ou o ritmo programado na dashboard (e salve) |
+| **Batidas perdidas** (no `ritmo`) | Falha real do gerador ou do sensor | Reveja a distância de detecção e a velocidade |
+
+### 8.7 Diagnóstico manual (sem os roteiros)
+
+**Monitor serial da PLC32** (115200 baud): no VS Code, ícone de tomada do PlatformIO ("Serial Monitor") ou:
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor -b 115200
+```
+(com a PLC ligada por USB-serial). Mensagens esperadas:
+```
+Estado inicial do sensor: REPOUSO
+Conectado ao broker MQTT.
+Mudanca do sensor: ACIONADO          <- ao aproximar o alvo
+Evento de batida pendente: 1
+Estado publicado em prensa/sensor1/estado: 1
+Batida publicada. Pendentes: 0
+```
+Se `Mudanca do sensor` **nunca** aparece ao mover o alvo, o sinal não chega ao GPIO34 (ligação/terminal). Se aparece `REPOUSO` quando o alvo está perto, a polaridade está invertida.
+
+**Ler a serial pelo PowerShell** (sem abrir o VS Code; a PLC32 aparece como `USB-SERIAL CH340`, ex.: COM6 — descubra com `[System.IO.Ports.SerialPort]::GetPortNames()`):
+```powershell
+$p = New-Object System.IO.Ports.SerialPort 'COM6',115200,'None',8,'One'
+$p.DtrEnable = $false; $p.RtsEnable = $false
+$p.Open()
+$t0 = Get-Date
+while (((Get-Date) - $t0).TotalSeconds -lt 30) { $txt = $p.ReadExisting(); if ($txt) { $txt }; Start-Sleep -Milliseconds 200 }
+$p.Close()
+```
+> **Abrir a serial reinicia a PLC32** (o conversor CH340 aciona o reset da placa). Ela reconecta sozinha em ~10 s. Feche o monitor do VS Code antes: duas janelas não abrem a mesma porta.
+
+**Teste da entrada sem o sensor (jumper):** separa "problema na PLC" de "problema no sensor". Com o **Com no +24 V** e a PLC alimentada, ligue um fio **curto do I34 ao V− (0 V)** por 2 segundos, como se o sensor NPN estivesse conduzindo, e solte:
+- O **LED Dp2** acende enquanto o fio está ligado e o painel/serial mostram `Mudanca do sensor` → **a PLC32 está ok**; o problema é o sensor (alimentação, tipo, distância/alvo, ligação do fio preto).
+- Nada acontece → problema na PLC32/ligação do comum (Com sem +24 V, 0 V não comum, terminal errado).
+
+Acompanhe sem reiniciar a placa com o painel abaixo.
+
+**Painel em texto, atualizando a cada segundo** (Terminal 2; `Ctrl+C` para sair):
+```powershell
+while ($true) { $m=(Invoke-RestMethod http://localhost:8085/api/state).maquinas.prensa1; "{0}  sensor={1}  total={2}  duplas={3}  spm={4}  placa_ha={5}" -f (Get-Date -Format T),$m.sensor_estado,$m.total,$m.duplas,$m.spm,$m.placa_ha; Start-Sleep 1 }
+```
+Aproxime e afaste o alvo e veja `sensor` e `total` mudando.
+
+**Zerar contadores** (botão da dashboard, ou):
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8085/reset -Body '{}'
+```
+
+### 8.8 Outros testes de bancada (manuais)
+
+Faça com o servidor em modo teste e o sensor ligado:
+
+| Teste | Como | Resultado esperado |
+|---|---|---|
+| **Estado × evento** | Mantenha o alvo **parado** perto do sensor | *Estado do sensor* muda; o total **não** aumenta além de 1 por ciclo |
+| **Parada** | Com batidas acontecendo, pare de mover o alvo | Em ~3 s: banner **MÁQUINA PARADA** e alerta vermelho (precisa de ≥10 batidas antes) |
+| **Comunicação** | Desligue o cabo de rede da PLC32 | Em ~10 s: banner **SEM COMUNICAÇÃO**; ao religar, volta sozinho |
+| **Queda do servidor** | `Ctrl+C` no servidor e inicie de novo (`node server.js --teste`) | A PLC32 reconecta sozinha em poucos segundos |
+| **Ruído elétrico** | Com a prensa/motor funcionando perto, rode `repique` | Zero pulsos duplos |
+
+### 8.9 Problemas comuns nos testes de bancada
+
+| Sintoma | Causa | Solução |
+|---|---|---|
+| `A PLC32 não está comunicando com o servidor` | PLC sem alimentação, cabo no RJ45 errado (I2C), IP/rede incorretos | LED ON da PLC32 aceso? Cabo no RJ45 **Ethernet**? `Test-Connection <IP da PLC>`; aguarde ~30 s e confira `placaOnline` |
+| Falha `fetch failed` / `O servidor de teste está rodando em ...?` | Servidor de teste não iniciado | Rode `node server.js --teste` no Terminal 1 |
+| `O servidor NÃO está em MODO TESTE` | Está rodando o servidor normal | `Ctrl+C` nele e inicie com `--teste` |
+| `EADDRINUSE` na porta 1883 ou 8085 | Servidor normal (ou outro) ainda ativo | Feche-o. Veja quem usa: `netstat -ano \| findstr ":1883"` |
+| PLC32 mostra `Falha MQTT. Estado PubSubClient: -2` | O TCP não chega ao servidor | Servidor no ar? Firewall? IP `10.0.1.202` correto no `config.h`? |
+| Dashboard não mostra a faixa de teste | Página aberta de antes das atualizações | `Ctrl+F5` no navegador |
+| O resultado do roteiro some | Ficam 3 min na tela depois do fim | Veja `dados_teste/resultados_bancada.csv` |
+
+### 8.10 Voltar à produção e limpar
+
+1. No Terminal 1: `Ctrl+C` (para o modo teste).
+2. Inicie o servidor normal: `node server.js`.
+3. Para apagar os dados do teste (opcional): `Remove-Item -Recurse -Force dados_teste`.
+4. Guarde `dados_teste/resultados_bancada.csv` se quiser o registro do teste de bancada (ele é apagado junto com a pasta).
+
+> Os dados de bancada validam o sistema; **não** são contagem industrial certificada (QoS 0, sem persistência na PLC).
 
 ## 9. Firmware da PLC32
 
 Está em `../firmware/main.cpp` e `../firmware/config.h` (projeto PlatformIO, ambiente `plc32`).
 
 - `config.h`: `mqtt_server = "10.0.1.202"`, `mqtt_port = 1883`, `pinoSensor = 34`.
-- **Confirme o GPIO do sensor** no manual/esquema da PLC32 antes de gravar. **Não aplique 24 V direto no GPIO do ESP32**; o GPIO34 não tem pull-up/pull-down interno.
+- **GPIO do sensor (confirmado no manual da PLC32 V2):** `GPIO34` é a **entrada optoacoplada 2**, borne **I34**. As outras entradas são I39 (GPIO39) e I35 (GPIO35). **Não aplique 24 V direto no GPIO do ESP32**; use sempre o borne optoacoplado. Pinagem completa em [`../docs/BANCADA.md`](../docs/BANCADA.md).
+- **Polaridade:** o manual não diz se o GPIO lê nível 1 ou 0 com o sensor acionado. O firmware assume **nível 1 = ACIONADO**. O roteiro `sinal` ([seção 8.4](#84-passo-a-passo-de-cada-roteiro)) mede isso na bancada.
 - A Ethernet usa `ETH.begin(1, 32, 14, 4, ETH_PHY_LAN8720)` (pinagem do exemplo CRESCER).
 - O firmware publica o estado atual ao (re)conectar **sem contá-lo como batida**; só a transição LOW → HIGH publica em `/batida`. A fila de batidas pendentes é de 1000 e se perde se a PLC reiniciar.
 
@@ -350,7 +665,7 @@ Separador `;`, UTF-8 com BOM (abre direto no Excel):
 A linha de um minuto só é gravada quando o minuto seguinte começa.
 
 ### `alarmes.csv` (um registro por alerta, na hora)
-Colunas: `data_hora;maquina;nivel;tipo;mensagem`. Níveis: `info`, `atencao`, `falha`. Tipos: `batida_perdida`, `batida_dupla`, `falhas_seguidas`, `parada`, `retomada`, `ritmo_baixo`, `ritmo_alto`, `instavel` e as versões `*_ok` (normalizou).
+Colunas: `data_hora;maquina;nivel;tipo;mensagem`. Níveis: `info`, `atencao`, `falha`. Tipos: `batida_perdida`, `batida_dupla`, `falhas_seguidas`, `parada`, `retomada`, `ritmo_baixo`, `ritmo_alto`, `instavel` e as versões `*_ok` (normalizou). Também há um registro `servidor_iniciado` a cada vez que o servidor liga; ele serve ao relatório para descontar o tempo em que o servidor ficou desligado (não é um alerta da máquina).
 
 ### Rotas HTTP
 
@@ -359,6 +674,16 @@ Colunas: `data_hora;maquina;nivel;tipo;mensagem`. Níveis: `info`, `atencao`, `f
 | `/` | GET | Dashboard. |
 | `/api/health` | GET | Diagnóstico: `mqtt`, `broker`, `placaOnline`, `ultimo_erro`. |
 | `/api/state` | GET | Estado atual da(s) máquina(s) em JSON. |
+| `/relatorio` | GET | Página do relatório parcial de desempenho. |
+| `/sensores` | GET | Página de cadastro de máquinas e sensores (ver [`../docs/MAQUINAS_E_SENSORES.md`](../docs/MAQUINAS_E_SENSORES.md)). |
+| `/api/maquinas` | GET | Lista as máquinas, com ritmo, sensores atribuídos e status. |
+| `/api/maquinas` | POST | Cria (sem `id`) ou atualiza uma máquina (`{"nome":"...","spm":155,...}`; com `id` atualiza). |
+| `/api/maquinas?id=prensa2` | DELETE | Exclui a máquina e libera os sensores dela. |
+| `/api/maquinas/sensores` | POST | Atribui um sensor a uma máquina (`{"maquina","sensor","papel":"batida"\|"estado","nome"}`). |
+| `/api/maquinas/sensores?maquina=prensa1&sensor=sensor2` | DELETE | Remove o sensor da máquina. |
+| `/api/sensores` | GET | Sensores que já enviaram mensagem, com nível, última mensagem e máquina atribuída. |
+| `/api/relatorio?periodo=hoje` | GET | Relatório em JSON. `periodo`: `15m`, `1h`, `4h`, `8h`, `24h` ou `hoje`; `maquina=prensa1`. Com `&formato=csv` baixa o resumo em CSV. |
+| `/estilo-<nome>.css` | GET | Folhas de estilo da pasta `public` (temas). |
 | `/events` | GET | Fluxo em tempo real (SSE) usado pela dashboard. |
 | `/api/config` | POST | Altera o ritmo programado (`{"maquina":"prensa1","spm":155,...}`). |
 | `/reset` | POST | Zera os contadores (`{"maquina":"prensa1"}`). |

@@ -2,28 +2,29 @@
 <html lang="pt-br"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Prensa de grampo</title>
-<style>
-:root{--bg:#10151c;--card:#1a222d;--tx:#e8edf3;--mut:#8896a8;--line:#2b3747;
---ok:#2ecc71;--atencao:#f1c40f;--falha:#ff4d4d;--parada:#ff4d4d;--ociosa:#8896a8;--medindo:#4aa3ff;--semcom:#ff4d4d}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px system-ui,sans-serif;padding:16px;max-width:1200px;margin:auto}
-h1{font-size:20px;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-.pill{font-size:13px;padding:4px 10px;border-radius:99px;background:#4a5666}.pill.on{background:var(--ok);color:#052}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px}
-.card{background:var(--card);border-radius:12px;padding:14px}
-.lbl{color:var(--mut);font-size:13px}.val{font-size:34px;font-weight:700;margin-top:4px}.sub{color:var(--mut);font-size:12px;margin-top:2px}
-#banner{border-radius:12px;padding:16px 20px;margin-bottom:12px;background:var(--card);border-left:10px solid var(--ociosa)}
-#bt{font-size:26px;font-weight:800}#bm{color:var(--mut);margin-top:4px}
-canvas{width:100%;height:170px;display:block}
-button,input,select{font:inherit;color:var(--tx);background:#2b3747;border:0;border-radius:8px;padding:8px 12px}
-button{cursor:pointer}button:hover{background:#38475c}
-input{width:100%;margin-top:4px}
-.cfg{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));align-items:end}
-#log{font:13px ui-monospace,monospace;max-height:220px;overflow:auto}
-#log div{padding:2px 0;color:var(--mut)}#log .atencao{color:var(--atencao)}#log .falha{color:var(--falha)}#log .info{color:var(--ok)}
-</style></head><body>
+<link id="tema" rel="stylesheet" href="/estilo-moderno.css">
+<script>try{if(localStorage.getItem("tema")==="classico")document.getElementById("tema").href="/estilo-classico.css"}catch(e){}</script>
+<link rel="stylesheet" href="/estilo-comum.css">
+</head><body>
 <h1><span>Prensa de grampo — monitor de batidas</span>
-<span><select id="sel" style="display:none" onchange="troca()"></select> <span id="conn" class="pill">aguardando a placa</span>
+<span><select id="sel" style="display:none" onchange="troca()"></select> <span id="modoteste" class="pill" hidden title="Os dados deste servidor ficam isolados em dados_teste e não entram na produção">MODO TESTE · dados isolados</span> <span id="conn" class="pill">aguardando a placa</span>
+<a class="btn" href="/relatorio" title="Relatório parcial de desempenho da prensa">Relatório</a>
+<a class="btn" href="/sensores" title="Cadastrar máquinas e sensores">Máquinas</a>
+<button onclick="alternaTema()" title="Alternar entre o visual moderno e o clássico">Tema</button>
+<button onclick="telaCheia()" title="Tela cheia (útil para TV na linha)">Tela cheia</button>
 <button onclick="rst()">Zerar contadores</button></span></h1>
+
+<!-- Faixa de TESTE: aparece quando o simulador está rodando e confere o resultado esperado -->
+<div id="sim" hidden>
+ <div class="sim-top"><span class="sim-tag" id="sim_tag">SIMULAÇÃO</span><b id="sim_nome"></b><span id="sim_tempo"></span><span id="sim_res"></span></div>
+ <div id="sim_desc"></div>
+ <div id="sim_passo" hidden></div>
+ <div id="sim_cont" hidden></div>
+ <div class="sim-bar"><i id="sim_prog"></i></div>
+ <div class="sim-chk"><span class="lbl" id="sim_chk_lbl">Alertas esperados:</span><span id="sim_chk"></span></div>
+ <div id="sim_esp"></div>
+ <div id="sim_aviso">Os números abaixo são da simulação, não da prensa real.</div>
+</div>
 
 <div id="banner"><div id="bt">—</div><div id="bm"></div></div>
 
@@ -36,39 +37,124 @@ input{width:100%;margin-top:4px}
  <div class="card"><div class="lbl">Variação do ritmo</div><div class="val" id="var">0%</div><div class="sub" id="cic"></div></div>
 </div>
 
-<div class="card" style="margin-bottom:12px"><div class="lbl">Batidas por minuto — últimos 5 min (faixa verde = ritmo programado)</div><canvas id="c1"></canvas></div>
-<div class="card" style="margin-bottom:12px"><div class="lbl">Sinal do sensor — últimos 60 s (vermelho = batida com problema)</div><canvas id="c2"></canvas></div>
+<div class="card" style="margin-bottom:12px"><div class="lbl">Batidas por minuto — últimos 5 min</div>
+ <div class="leg"><span><i class="d" style="background:#ff9f43"></i>ritmo</span><span><i class="d" style="background:rgba(46,204,113,.55)"></i>faixa programada</span><span><i class="d" style="background:rgba(251,91,107,.5)"></i>máquina parada</span><span><i class="d" style="background:rgba(96,165,250,.5)"></i>período de teste</span><span><i class="t"></i>alerta (passe o mouse)</span></div>
+ <canvas id="c1"></canvas></div>
+<div class="card" style="margin-bottom:12px"><div class="lbl">Intervalo entre batidas — últimos 60 s</div>
+ <div class="leg"><span><i class="d" style="background:var(--ok)"></i>no ritmo</span><span><i class="d" style="background:var(--atencao)"></i>fora da tolerância</span><span><i class="d" style="background:var(--falha)"></i>perdida (acima de 1,6×)</span><span><i class="d" style="background:#e879f9"></i>pulso duplo (abaixo de 0,5×)</span></div>
+ <canvas id="c3"></canvas></div>
+<div class="card" style="margin-bottom:12px"><div class="lbl">Sinal do sensor — últimos 60 s</div>
+ <div class="leg"><span><i class="d" style="background:#ff9f43"></i>batida</span><span><i class="d" style="background:var(--falha)"></i>após uma perdida</span><span><i class="d" style="background:#e879f9"></i>pulso extra</span><span><i class="d vazio"></i>batida que faltou</span></div>
+ <canvas id="c2"></canvas></div>
 
-<div class="card" style="margin-bottom:12px"><div class="lbl" style="margin-bottom:8px">Ritmo programado desta máquina</div>
+<div class="card" style="margin-bottom:12px"><div class="lbl" style="margin-bottom:10px">Ritmo programado desta máquina <span class="dica">— cada medidor mostra o valor medido agora contra o parâmetro</span></div>
  <div class="cfg">
   <label>Nome<input id="f_nome"></label>
-  <label>Batidas/min programadas<input id="f_spm" type="number" min="1"></label>
-  <label>Tolerância (%)<input id="f_tol" type="number" min="1"></label>
-  <label>Parada após (s)<input id="f_parada_s" type="number" step="0.5" min="1"></label>
-  <label>Perdidas p/ FALHA (60 s)<input id="f_falhas_limite" type="number" min="1"></label>
-  <label>Variação p/ instável (%)<input id="f_instab" type="number" min="5"></label>
+  <div class="par"><label>Batidas/min programadas<input id="f_spm" type="number" min="1"></label>
+   <div class="med" id="m_spm" data-tipo="faixa"><i class="enche"></i><i class="faixa"></i><i class="marc"></i></div><small id="t_spm"></small></div>
+  <div class="par"><label>Tolerância (%)<input id="f_tol" type="number" min="1"></label>
+   <div class="med" id="m_tol" data-tipo="faixa"><i class="enche"></i><i class="faixa"></i><i class="marc"></i></div><small id="t_tol"></small></div>
+  <div class="par"><label>Parada após (s)<input id="f_parada_s" type="number" step="0.5" min="1"></label>
+   <div class="med" id="m_parada" data-tipo="barra"><i class="enche"></i><i class="faixa"></i><i class="marc"></i></div><small id="t_parada"></small></div>
+  <div class="par"><label>Perdidas p/ FALHA (60 s)<input id="f_falhas_limite" type="number" min="1"></label>
+   <div class="med" id="m_falhas" data-tipo="barra"><i class="enche"></i><i class="faixa"></i><i class="marc"></i></div><small id="t_falhas"></small></div>
+  <div class="par"><label>Variação p/ instável (%)<input id="f_instab" type="number" min="5"></label>
+   <div class="med" id="m_instab" data-tipo="barra"><i class="enche"></i><i class="faixa"></i><i class="marc"></i></div><small id="t_instab"></small></div>
   <button onclick="salva()">Salvar</button>
  </div></div>
 
 <div class="card"><div class="lbl">Alertas</div><div id="log"></div></div>
+<div id="tip"></div>
 
 <script>
 const $=id=>document.getElementById(id);
 const COR={ok:'--ok',atencao:'--atencao',falha:'--falha',parada:'--parada',ociosa:'--ociosa',medindo:'--medindo',sem_comunicacao:'--semcom'};
 const TXT={ok:'OPERANDO NORMAL',atencao:'ATENÇÃO',falha:'FALHA',parada:'MÁQUINA PARADA',ociosa:'AGUARDANDO BATIDAS',medindo:'MEDINDO O RITMO…',sem_comunicacao:'SEM COMUNICAÇÃO'};
-let off=0,sel=null,snap={},H={},editando=false;
-const cor=n=>getComputedStyle(document.body).getPropertyValue(n).trim();
+let off=0,sel=null,snap={},H={},editando=false,sim=null;
+const ULT={};            // id -> instante (s, relógio do servidor) da última batida
+const REG={c1:[],c2:[],c3:[]}; // regiões para a dica ao passar o mouse
+const LARANJA='#ff9f43',MAG='#e879f9';
+const cor=n=>getComputedStyle(document.body).getPropertyValue(n).trim()||'#888';
+const fmt=(n,d=1)=>Number(n).toFixed(d).replace('.',',');
+const hora=t=>new Date(t*1000).toLocaleTimeString();
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const agoraS=()=>Date.now()/1000+off;
 function H_(id){return H[id]||(H[id]={spm:[],hits:[],alertas:[]});}
 function log(a){const d=document.createElement('div');d.className=a.nivel;
- d.textContent=new Date(a.t*1000).toLocaleTimeString()+'  '+(Object.keys(snap).length>1?'['+a.maquina+'] ':'')+a.msg;
+ d.textContent=hora(a.t)+'  '+(Object.keys(snap).length>1?'['+a.maquina+'] ':'')+a.msg;
  const l=$('log');l.prepend(d);while(l.children.length>100)l.lastChild.remove();}
+
+/* ---------- medidores dos parâmetros ---------- */
+const nivelCor=f=>f>=1?'var(--falha)':f>=.7?'var(--atencao)':'var(--ok)';
+function medidor(id,o){const el=$('m_'+id);if(!el)return;
+ const f=el.querySelector('.enche'),mk=el.querySelector('.marc'),fx=el.querySelector('.faixa');
+ if(o.fill!=null){f.style.width=clamp(o.fill,0,1)*100+'%';f.style.background=nivelCor(o.fill);}
+ if(o.marc!=null)mk.style.left=clamp(o.marc,0,1)*100+'%';
+ if(o.faixa){fx.style.left=o.faixa[0]*100+'%';fx.style.width=(o.faixa[1]-o.faixa[0])*100+'%';}
+ $('t_'+id).textContent=o.texto;el.closest('.par').classList.toggle('alerta',!!o.estouro);}
+function medidorParada(){const m=snap[sel];if(!m)return;const c=m.cfg,u=ULT[sel];
+ if(u==null){medidor('parada',{fill:0,texto:'sem batidas ainda'});return;}
+ const uh=Math.max(0,agoraS()-u);
+ medidor('parada',{fill:uh/c.parada_s,texto:'última batida há '+fmt(uh)+' s (limite '+fmt(c.parada_s)+' s)',estouro:uh>=c.parada_s});}
+setInterval(medidorParada,100);
+
+/* ---------- faixa de teste (simulador) ---------- */
+/* teste de bancada (sensor real na PLC32): quem comanda e o roteiro teste_bancada.js, a dashboard so mostra */
+function mostraBancada(){
+ const fim=!!sim.fim;
+ $('sim_tag').textContent='TESTE DE BANCADA';$('sim_nome').textContent=sim.cenario;$('sim_desc').textContent=sim.descricao||'';
+ $('sim_tempo').textContent=fim?'concluído':'passo '+(sim.passoN||0)+'/'+(sim.passoTotal||0)+(sim.restante!=null?' · '+sim.restante+' s':'');
+ $('sim_prog').style.width=clamp(sim.progresso||0,0,100)+'%';
+ const p=$('sim_passo');p.hidden=fim||!sim.passo;p.textContent=sim.passo||'';
+ const c=$('sim_cont'),ct=sim.contagem;c.hidden=!ct;
+ if(ct)c.textContent='Contagem: '+ct.atual+' / '+ct.alvo;
+ $('sim_chk_lbl').textContent='Critérios:';
+ $('sim_chk').innerHTML=(sim.criterios||[]).map(k=>'<span class="chip '+(k.estado==='ok'?'ok':k.estado==='falha'?'falha':k.estado==='info'?'extra':'pend')+'">'+k.texto.replace(/</g,'&lt;')+'</span>').join('');
+ $('sim_esp').textContent='Esperado: '+(sim.esperado||'');
+ $('sim_aviso').textContent='Sensor real na PLC32: os números abaixo são deste teste e ficam isolados em dados_teste.';
+ const r=$('sim_res');
+ if(fim&&sim.resultado){r.textContent=sim.resultado;r.className='res '+(sim.resultado==='APROVADO'?'ok':'falha');}
+ else{r.textContent=fim?'avaliando…':'';r.className='';}}
+function mostraSim(){const el=$('sim');if(!sim){el.hidden=true;return;}el.hidden=false;
+ $('sim_passo').hidden=true;$('sim_cont').hidden=true;
+ if(sim.bancada){mostraBancada();return;}
+ $('sim_tag').textContent='SIMULAÇÃO';$('sim_chk_lbl').textContent='Alertas esperados:';
+ $('sim_aviso').textContent='Os números abaixo são da simulação, não da prensa real.';
+ const now=agoraS(),dec=now-sim.inicio,m=snap[sel];
+ $('sim_nome').textContent=sim.cenario;$('sim_desc').textContent=sim.descricao;$('sim_esp').textContent='Esperado: '+sim.esperado;
+ $('sim_prog').style.width=(sim.fim?100:clamp(dec/sim.duracao*100,0,100))+'%';
+ $('sim_tempo').textContent=sim.fim?'concluído':Math.round(dec)+' / '+sim.duracao+' s';
+ // só valem alertas depois dos 2 primeiros segundos (descarta o que sobrou do cenário anterior) e, para a
+ // retomada, só se houve uma parada antes dela
+ const T={};for(const a of (H_(sel).alertas||[]))if(a.t>=sim.inicio+2)(T[a.tipo]=T[a.tipo]||[]).push(a.t);
+ const obs=new Set(Object.keys(T).filter(k=>k!=='retomada'));
+ if(T.retomada&&T.parada&&T.retomada.some(r=>T.parada.some(p=>p<r)))obs.add('retomada');
+ const esp=sim.esperaTipos||[];
+ // "sem comunicação" é um estado do banner, não um alerta gravado: só conta se o cenário o espera
+ // (depois do fim de qualquer teste a placa simulada fica quieta e esse estado aparece sempre)
+ if(esp.includes('sem_comunicacao')&&m&&m.status==='sem_comunicacao'&&m.placa_ha!=null&&m.placa_ha>10&&dec>5)obs.add('sem_comunicacao');
+ const falta=esp.filter(t=>!obs.has(t));
+ const extras=[...obs].filter(t=>!esp.includes(t)&&t!=='parada'&&t!=='retomada'&&!t.endsWith('_ok'));
+ const fechou=sim.fim&&now-sim.fim>=5; // espera alguns segundos para o último alerta chegar
+ let h='';for(const t of esp)h+='<span class="chip '+(obs.has(t)?'ok':(fechou?'falha':'pend'))+'">'+t+'</span>';
+ for(const t of extras)h+='<span class="chip extra" title="alerta que não era esperado neste teste">'+t+' (extra)</span>';
+ if(!esp.length&&!extras.length)h='<span class="chip '+(fechou?'ok':'pend')+'">nenhum alerta (ritmo normal)</span>';
+ $('sim_chk').innerHTML=h;
+ const r=$('sim_res');
+ if(!fechou){r.textContent=sim.fim?'avaliando…':'';r.className='';}
+ else if(falta.length){r.textContent='REPROVADO — faltou: '+falta.join(', ');r.className='res falha';}
+ else if(extras.length){r.textContent='APROVADO, com alertas extras';r.className='res atencao';}
+ else{r.textContent='APROVADO';r.className='res ok';}}
+
 function mostra(){
  const m=snap[sel];if(!m)return;const c=m.cfg;
+ $('banner').dataset.status=m.status;
  $('bt').textContent=TXT[m.status]||m.status;$('bt').style.color=cor(COR[m.status]);
  $('banner').style.borderLeftColor=cor(COR[m.status]);
  $('bm').textContent=m.ativos.length?m.ativos.join(' · '):(m.status==='ok'?'Ritmo dentro do programado':'');
  $('spm').textContent=Math.round(m.spm);
- $('prog').textContent='programado '+c.spm+'/min ±'+c.tol+'%  ('+Math.round(c.spm*(1-c.tol/100))+'–'+Math.round(c.spm*(1+c.tol/100))+')';
+ const lo=c.spm*(1-c.tol/100),hi=c.spm*(1+c.tol/100);
+ $('prog').textContent='programado '+c.spm+'/min ±'+c.tol+'%  ('+Math.round(lo)+'–'+Math.round(hi)+')';
  $('total').textContent=m.total;$('u60').textContent=m.ultimos_60s+' no último minuto';
  $('perd').textContent=m.perdidas;$('dup').textContent=m.duplas;
  const se=m.sensor_estado||'desconhecido';$('sensor').textContent=se==='1'?'ACIONADO':se==='0'?'REPOUSO':'—';
@@ -79,7 +165,19 @@ function mostra(){
  p.textContent=a==null?'aguardando a placa':a<6?'placa ativa ('+m.origem+')':'placa sem sinal há '+Math.round(a)+' s';
  p.classList.toggle('on',a!=null&&a<6);
  if(!editando&&document.activeElement.tagName!=='INPUT'){for(const k of ['nome','spm','tol','parada_s','falhas_limite','instab'])$('f_'+k).value=c[k];}
+ // medidores: valor medido agora contra cada parâmetro
+ const ativo=m.spm>0,esc=c.spm*1.5;
+ medidor('spm',{marc:m.spm/esc,faixa:[lo/esc,hi/esc],texto:ativo?'agora '+Math.round(m.spm)+'/min (faixa '+Math.round(lo)+'–'+Math.round(hi)+')':'sem ritmo agora',estouro:ativo&&(m.spm<lo||m.spm>hi)});
+ const dev=ativo?(m.spm-c.spm)/c.spm*100:0;
+ medidor('tol',{marc:.5+dev/(4*c.tol),faixa:[.25,.75],texto:ativo?'desvio '+(dev>=0?'+':'')+fmt(dev)+'% (limite ±'+c.tol+'%)':'sem ritmo agora',estouro:ativo&&Math.abs(dev)>c.tol});
+ medidor('falhas',{fill:m.falhas_60s/c.falhas_limite,texto:m.falhas_60s+' perdida(s) em 60 s (limite '+c.falhas_limite+')',estouro:m.falhas_60s>=c.falhas_limite});
+ medidor('instab',{fill:m.variacao/c.instab,texto:'variação '+fmt(m.variacao)+'% (limite '+c.instab+'%)',estouro:m.variacao>c.instab});
+ medidorParada();mostraSim();
 }
+function pisca(id){const c=$(id).closest('.card');c.classList.remove('flash');void c.offsetWidth;c.classList.add('flash');}
+function alternaTema(){const l=$('tema'),novo=l.getAttribute('href').includes('moderno')?'classico':'moderno';
+ l.href='/estilo-'+novo+'.css';try{localStorage.setItem('tema',novo);}catch(e){}}
+function telaCheia(){if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen();}
 function atualizaSel(){const s=$('sel'),ids=Object.keys(snap);
  if(s.options.length!==ids.length){s.innerHTML=ids.map(i=>`<option value="${i}">${snap[i].cfg.nome||i}</option>`).join('');}
  s.style.display=ids.length>1?'':'none';if(!sel||!snap[sel])sel=ids[0];s.value=sel;}
@@ -89,35 +187,95 @@ function salva(){const d={maquina:sel};for(const k of ['nome','spm','tol','parad
 function rst(){if(confirm('Zerar contadores desta máquina?'))fetch('/reset',{method:'POST',body:JSON.stringify({maquina:sel})});}
 document.addEventListener('input',e=>{if(e.target.closest('.cfg')){editando=true;clearTimeout(window._e);window._e=setTimeout(()=>editando=false,15000);}});
 
+/* ---------- gráficos ---------- */
 function fundo(cv){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;
  const x=cv.getContext('2d');x.scale(d,d);return [x,r.width,r.height];}
 function eixoX(x,w,h,jan,passo){x.strokeStyle=cor('--line');x.fillStyle=cor('--mut');x.font='11px system-ui';x.lineWidth=1;
  for(let s=0;s<=jan;s+=passo){const px=w-s/jan*w;x.beginPath();x.moveTo(px,0);x.lineTo(px,h-14);x.stroke();
   x.fillText(s?'-'+(jan>=120?s/60+'min':s+'s'):'agora',Math.min(w-30,Math.max(2,px-14)),h-2);}}
-function graf1(){const [x,w,h]=fundo($('c1'));const m=snap[sel];if(!m)return;const now=Date.now()/1000+off,J=300,c=m.cfg;
+function faixaTeste(x,w,h,J,now){if(!sim)return;const X=t=>w-(now-t)/J*w;
+ const a=X(Math.max(sim.inicio,now-J)),b=X(sim.fim||now);if(b<0)return;
+ x.fillStyle='rgba(96,165,250,.12)';x.fillRect(a,0,Math.max(2,b-a),h-14);
+ x.fillStyle=cor('--medindo');x.font='11px system-ui';x.fillText('teste: '+sim.cenario,Math.max(4,a+4),h-18);}
+
+function graf1(){REG.c1=[];const [x,w,h]=fundo($('c1'));const m=snap[sel];if(!m)return;const now=agoraS(),J=300,c=m.cfg;
+ const X=t=>w-(now-t)/J*w;
  const ser=H_(sel).spm.filter(p=>now-p[0]<=J);const top=Math.max(c.spm*1.4,...ser.map(p=>p[1]))*1.05,Y=v=>(h-18)-(v/top)*(h-26);
- eixoX(x,w,h,J,60);
+ eixoX(x,w,h,J,60);faixaTeste(x,w,h,J,now);
+ // períodos de máquina parada (do alerta "parada" até a "retomada")
+ const evs=(H_(sel).alertas||[]).filter(a=>a.tipo==='parada'||a.tipo==='retomada').slice().reverse();
+ let ini=null;const segs=[];
+ for(const a of evs){if(a.tipo==='parada')ini=a.t;else if(ini!==null){segs.push([ini,a.t]);ini=null;}}
+ if(ini!==null&&m.ativos.includes('Máquina parada'))segs.push([ini,now]);
+ for(const [a,b] of segs){if(b<now-J)continue;const xa=X(Math.max(a,now-J)),xb=X(b);
+  x.fillStyle='rgba(251,91,107,.18)';x.fillRect(xa,0,Math.max(2,xb-xa),h-14);}
  x.fillStyle='rgba(46,204,113,.18)';x.fillRect(0,Y(c.spm*(1+c.tol/100)),w,Y(c.spm*(1-c.tol/100))-Y(c.spm*(1+c.tol/100)));
- x.strokeStyle='rgba(46,204,113,.6)';x.beginPath();x.moveTo(0,Y(c.spm));x.lineTo(w,Y(c.spm));x.stroke();
- x.fillStyle=cor('--mut');x.fillText(c.spm+'/min',4,Y(c.spm)-3);
- x.strokeStyle='#ff9f43';x.lineWidth=2;x.beginPath();let ini=false;
- for(const p of ser){const px=w-(now-p[0])/J*w;if(!ini){x.moveTo(px,Y(p[1]));ini=true}else x.lineTo(px,Y(p[1]));}x.stroke();}
-function graf2(){const [x,w,h]=fundo($('c2'));const now=Date.now()/1000+off,J=60;eixoX(x,w,h,J,10);
- for(const p of H_(sel).hits){const t=p[0],px=w-(now-t)/J*w;if(px<0)continue;
-  x.strokeStyle=p[1]?cor('--falha'):'#ff9f43';x.lineWidth=p[1]?3:2;x.beginPath();x.moveTo(px,h-16);x.lineTo(px,18);x.stroke();}}
-function loop(){graf1();graf2();requestAnimationFrame(loop);}
+ x.strokeStyle='rgba(46,204,113,.6)';x.lineWidth=1;x.beginPath();x.moveTo(0,Y(c.spm));x.lineTo(w,Y(c.spm));x.stroke();
+ x.fillStyle=cor('--mut');x.font='11px system-ui';x.fillText(c.spm+'/min',4,Y(c.spm)-3);
+ x.strokeStyle=LARANJA;x.lineWidth=2;x.beginPath();let primeiro=false;
+ for(const p of ser){const px=X(p[0]);if(!primeiro){x.moveTo(px,Y(p[1]));primeiro=true}else x.lineTo(px,Y(p[1]));}x.stroke();
+ // marcadores de alerta (triângulo no topo + linha tracejada)
+ for(const a of (H_(sel).alertas||[])){if(now-a.t>J||a.t>now)continue;const px=X(a.t);
+  const col=a.nivel==='falha'?cor('--falha'):a.nivel==='atencao'?cor('--atencao'):cor('--ok');
+  x.strokeStyle=col;x.lineWidth=1;x.setLineDash([3,3]);x.beginPath();x.moveTo(px,12);x.lineTo(px,h-14);x.stroke();x.setLineDash([]);
+  x.fillStyle=col;x.beginPath();x.moveTo(px-5,1);x.lineTo(px+5,1);x.lineTo(px,11);x.closePath();x.fill();
+  REG.c1.push({x:px,y:6,txt:hora(a.t)+' — '+a.msg});}}
+
+function graf3(){REG.c3=[];const [x,w,h]=fundo($('c3'));const m=snap[sel];if(!m)return;const c=m.cfg,now=agoraS(),J=60;
+ const ref=60/c.spm,X=t=>w-(now-t)/J*w;
+ const hs=H_(sel).hits.filter(p=>now-p[0]<=J).map(p=>p[0]).sort((a,b)=>a-b);
+ const pts=[];for(let i=1;i<hs.length;i++)pts.push([hs[i],hs[i]-hs[i-1]]);
+ const top=Math.min(3*ref,Math.max(2.2*ref,...pts.map(p=>p[1]*1.1))),Y=v=>(h-18)-clamp(v/top,0,1)*(h-30);
+ eixoX(x,w,h,J,10);faixaTeste(x,w,h,J,now);
+ const lo=60/(c.spm*(1+c.tol/100)),hi=60/(c.spm*(1-c.tol/100));
+ x.fillStyle='rgba(46,204,113,.18)';x.fillRect(0,Y(hi),w,Y(lo)-Y(hi));
+ x.strokeStyle='rgba(46,204,113,.6)';x.lineWidth=1;x.beginPath();x.moveTo(0,Y(ref));x.lineTo(w,Y(ref));x.stroke();
+ x.font='11px system-ui';x.fillStyle=cor('--mut');x.fillText(Math.round(ref*1000)+' ms (normal)',4,Y(ref)-3);
+ x.setLineDash([4,4]);
+ x.strokeStyle=cor('--falha');x.beginPath();x.moveTo(0,Y(1.6*ref));x.lineTo(w,Y(1.6*ref));x.stroke();x.fillStyle=cor('--falha');x.fillText('1,6× = batida perdida',4,Y(1.6*ref)-3);
+ x.strokeStyle=MAG;x.beginPath();x.moveTo(0,Y(.5*ref));x.lineTo(w,Y(.5*ref));x.stroke();x.fillStyle=MAG;x.fillText('0,5× = pulso duplo',4,Y(.5*ref)+12);
+ x.setLineDash([]);
+ x.strokeStyle='rgba(255,159,67,.45)';x.lineWidth=1;x.beginPath();pts.forEach((p,i)=>{const px=X(p[0]);i?x.lineTo(px,Y(p[1])):x.moveTo(px,Y(p[1]));});x.stroke();
+ for(const [t,dt] of pts){const px=X(t),py=Y(dt);
+  const col=dt>1.6*ref?cor('--falha'):dt<.5*ref?MAG:(dt<lo||dt>hi)?cor('--atencao'):cor('--ok');
+  x.fillStyle=col;x.beginPath();x.arc(px,py,dt>1.6*ref||dt<.5*ref?5:3.5,0,7);x.fill();
+  REG.c3.push({x:px,y:py,txt:hora(t)+' — intervalo '+Math.round(dt*1000)+' ms ('+fmt(dt/ref,2)+'× o normal)'});}}
+
+function graf2(){REG.c2=[];const [x,w,h]=fundo($('c2'));const m=snap[sel];const now=agoraS(),J=60;
+ const ref=m?60/Math.max(1,m.spm||m.cfg.spm):0.4;eixoX(x,w,h,J,10);faixaTeste(x,w,h,J,now);
+ for(const p of H_(sel).hits){const t=p[0],px=w-(now-t)/J*w;if(px<0)continue;const f=p[1];
+  let col=LARANJA,lw=2,topo=18;
+  if(f==='perdida'){col=cor('--falha');lw=3;}else if(f==='dupla'){col=MAG;topo=h*.5;}
+  x.strokeStyle=col;x.lineWidth=lw;x.beginPath();x.moveTo(px,h-16);x.lineTo(px,topo);x.stroke();
+  REG.c2.push({x:px,y:(h-16+topo)/2,txt:hora(t)+(f==='perdida'?' — batida após uma perdida':f==='dupla'?' — pulso extra (duplo disparo)':' — batida')});
+  if(f==='perdida'){const gt=t-ref,gx=w-(now-gt)/J*w;if(gx>=0){x.strokeStyle=cor('--falha');x.lineWidth=1.5;x.setLineDash([3,3]);
+   x.beginPath();x.moveTo(gx,h-16);x.lineTo(gx,18);x.stroke();x.setLineDash([]);x.fillStyle=cor('--falha');x.font='bold 12px system-ui';x.fillText('?',gx-3,13);
+   REG.c2.push({x:gx,y:h/2,txt:hora(gt)+' — batida que faltou (estimada)'});}}}}
+function loop(){graf1();graf3();graf2();requestAnimationFrame(loop);}
+
+/* dica ao passar o mouse sobre os gráficos */
+for(const id of ['c1','c2','c3']){const cv=$(id);
+ cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+  let best=null,bd=16*16;for(const p of REG[id]){const d=(p.x-mx)**2+(p.y-my)**2;if(d<bd){bd=d;best=p;}}
+  const tip=$('tip');if(best){tip.textContent=best.txt;tip.style.left=Math.min(innerWidth-260,e.clientX+12)+'px';tip.style.top=(e.clientY+14)+'px';tip.style.display='block';cv.style.cursor='pointer';}
+  else{tip.style.display='none';cv.style.cursor='';}});
+ cv.addEventListener('mouseleave',()=>{$('tip').style.display='none';});}
 
 function conecta(){const es=new EventSource('/events');
  es.onmessage=e=>{const m=JSON.parse(e.data);
+  if(m.type==='init'||m.type==='snapshot'){sim=m.sim||null;$('modoteste').hidden=!m.modo_teste;}
   if(m.type==='init'){snap=m.maquinas;off=m.now-Date.now()/1000;
    for(const id in m.hist){const h=H_(id);h.spm=m.hist[id].spm;h.hits=m.hist[id].hits.map(t=>[t,null]);h.alertas=m.hist[id].alertas;}
+   for(const id in snap)ULT[id]=snap[id].ultimo_ha==null?null:m.now-snap[id].ultimo_ha;
    atualizaSel();troca();}
   else if(m.type==='snapshot'){snap=m.maquinas;off=m.now-Date.now()/1000;atualizaSel();
    for(const id in snap){const h=H_(id);h.spm.push([m.now,snap[id].spm]);if(h.spm.length>600)h.spm.shift();
-    h.hits=h.hits.filter(p=>m.now-p[0]<=70);}mostra();}
-  else if(m.type==='hit'){const h=H_(m.id);h.hits.push([m.t,m.flag]);}
+    h.hits=h.hits.filter(p=>m.now-p[0]<=70);
+    if(snap[id].ultimo_ha!=null)ULT[id]=m.now-snap[id].ultimo_ha;}mostra();}
+  else if(m.type==='hit'){const h=H_(m.id);h.hits.push([m.t,m.flag]);ULT[m.id]=m.t;
+   if(m.id===sel){pisca(m.flag==='perdida'?'perd':m.flag==='dupla'?'dup':'total');}}
   else if(m.type==='alert'){H_(m.maquina).alertas.unshift(m);if(m.maquina===sel)log(m);}
-  else if(m.type==='reset'){H_(m.id).hits=[];H_(m.id).spm=[];}};
+  else if(m.type==='reset'){H_(m.id).hits=[];H_(m.id).spm=[];ULT[m.id]=null;}};
  es.onerror=()=>{$('conn').textContent='sem servidor';$('conn').classList.remove('on');};}
 conecta();loop();
 </script></body></html>

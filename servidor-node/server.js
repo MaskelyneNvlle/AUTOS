@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { Maquina } = require('./analise');
+const relatorio = require('./relatorio');
 
 const arg = (nome, padrao) => {
   const i = process.argv.indexOf('--' + nome);
@@ -24,7 +25,10 @@ const MQTT_HOST = arg('mqtt-host', null); // null = broker embutido
 
 const BASE = __dirname;
 // --dados <pasta>: guarda maquinas.json e os CSV em outra pasta (usado nos testes, para nao misturar com producao)
-const DADOS = path.resolve(arg('dados', BASE));
+// --teste: atalho para "--dados dados_teste" nas portas normais (a PLC32 conecta na 1883 do jeito de sempre,
+// mas tudo o que ela mandar fica isolado em dados_teste e a dashboard mostra "MODO TESTE")
+const DADOS = path.resolve(arg('dados', process.argv.includes('--teste') ? path.join(__dirname, 'dados_teste') : BASE));
+const MODO_TESTE = DADOS !== path.resolve(BASE);
 fs.mkdirSync(DADOS, { recursive: true });
 const CFG_FILE = path.join(DADOS, 'maquinas.json');
 const PROD_CSV = path.join(DADOS, 'producao.csv');
@@ -38,6 +42,8 @@ const estadoSensor = {}; // id -> '1' (acionado) | '0' (repouso)
 const clientes = new Set(); // respostas SSE abertas
 let mqttStatus = MQTT_HOST ? 'conectando' : 'broker embutido ativo';
 let mqttUltimoErro = '';
+// Cenario em execucao do simulador (topico prensa/simulacao); a dashboard mostra uma faixa de "TESTE"
+let simulacao = null;
 
 const agoraS = () => Date.now() / 1000;
 const pad = (n) => String(n).padStart(2, '0');
@@ -61,6 +67,10 @@ function carregaConfig() {
       modelo: 'Formadora hidráulica de alta velocidade (manual: 150-160/min)',
       spm: 155,
     };
+  }
+  // migracao: maquinas antigas nao tinham a lista de sensores; o topico prensa/sensor1 era a batida da prensa1
+  if (!Array.isArray(cfg[MAQUINA_PADRAO].sensores)) {
+    cfg[MAQUINA_PADRAO].sensores = [{ id: 'sensor1', papel: 'batida', nome: 'Sensor principal' }];
   }
   for (const [mid, c] of Object.entries(cfg)) maquinas[mid] = new Maquina(mid, c);
   salvaConfig();
@@ -123,8 +133,11 @@ function snapshotTodas(agora) {
     item.origem = ultimo ? ultimo[1] : '';
     item.sensor_estado = estadoSensor[mid] || 'desconhecido';
     dados[mid] = item;
+    // o resultado do teste fica na tela por 30 s depois do fim do cenario
+    // o resultado fica na tela depois do fim: 30 s no simulador, 3 min no teste de bancada (para dar tempo de ler)
+    if (simulacao && simulacao.fim && agora - simulacao.fim > (simulacao.bancada ? 180 : 30)) simulacao = null;
   }
-  return { type: 'snapshot', now: agora, maquinas: dados };
+  return { type: 'snapshot', now: agora, maquinas: dados, sim: simulacao, modo_teste: MODO_TESTE };
 }
 
 function publica(alertas, linha) {
@@ -185,34 +198,205 @@ function trataBatida(body, origem) {
   return true;
 }
 
-// ---------------------------------------------------------------- MQTT (PLC32)
-// Firmware novo:  prensa/sensor1/estado (0|1, nao conta) | prensa/sensor1/batida (1, conta)
-//                 prensa/heartbeat (ping, nao conta)
-// Legado:         prensa/sensor1 com payload 1 conta como batida
+// Faixa de TESTE da dashboard. Duas origens usam o mesmo mecanismo:
+//  - simulador (MQTT, topico prensa/simulacao)
+//  - roteiro de bancada com a PLC32 real (HTTP, POST /api/teste, ver teste_bancada.js)
+// Mensagens: inicio {cenario, descricao, ...} | atualizacao {atualiza:true, ...campos} | fim {fim:true, ...resultado}
+function aplicaTeste(d, agora) {
+  if (d.fim) {
+    const { fim, ...resto } = d;
+    simulacao = simulacao ? { ...simulacao, ...resto, fim: agora } : null;
+  } else if (d.atualiza) {
+    const { atualiza, ...resto } = d;
+    if (simulacao) simulacao = { ...simulacao, ...resto };
+  } else {
+    simulacao = { ...d, inicio: agora };
+  }
+}
+
+// ---------------------------------------------------------------- MQTT (PLC32) e cadastro de sensores
+// Topicos (qualquer sensor, de qualquer maquina):
+//   prensa/<sensor>/estado  -> "0"/"1": nivel do sinal (nao conta producao)
+//   prensa/<sensor>/batida  -> "1": uma batida (conta, se o sensor tiver papel "batida")
+//   prensa/heartbeat        -> "ping": a PLC inteira esta viva (nao conta)
+//   prensa/<sensor>         -> legado: "1" = batida, "0"/"1" = estado
+// A maquina que recebe um sensor vem do cadastro (pagina /sensores), e nao do nome do topico.
+const RE_SENSOR_ID = /^[A-Za-z0-9_-]{1,30}$/;
+const RE_MAQ_ID = /^[a-z0-9_-]{1,30}$/;
+const sensoresVistos = {}; // sensor -> {ultimo, topico, estado}: inclui sensores ainda nao cadastrados
+
+function sensoresDe(m) {
+  return Array.isArray(m.cfg.sensores) ? m.cfg.sensores : [];
+}
+
+function localizaSensor(sid) {
+  for (const m of Object.values(maquinas)) {
+    const s = sensoresDe(m).find((x) => x.id === sid);
+    if (s) return { m, s };
+  }
+  return null;
+}
+
+function listaSensores(agora) {
+  return Object.entries(sensoresVistos)
+    .map(([sid, v]) => {
+      const loc = localizaSensor(sid);
+      return {
+        id: sid,
+        topico: v.topico,
+        ultimo_ha: Math.round(agora - v.ultimo),
+        estado: v.estado,
+        maquina: loc ? loc.m.id : null,
+        papel: loc ? loc.s.papel : null,
+        nome: loc ? loc.s.nome : null,
+      };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+}
+
 function onMqttMessage(topicoBruto, payloadBruto) {
   try {
     const payload = String(payloadBruto).trim();
     const topico = topicoBruto.replace(/^\/+|\/+$/g, '');
-    const mid = MAQUINA_PADRAO;
     const agora = agoraS();
-    visto[mid] = [agora, `MQTT (${topico})`];
-    if (topico.endsWith('/estado') || topico === 'prensa/sensor1') {
-      if (payload === '0' || payload === '1') estadoSensor[mid] = payload;
+    // Informacao do simulador: nao e da placa, nao conta producao nem presenca
+    if (topico === 'prensa/simulacao') {
+      aplicaTeste(JSON.parse(payload), agora);
+      return;
     }
-    if (topico === 'prensa/heartbeat') return;
-    if (topico.endsWith('/batida') && payload === '1') {
-      recebeBatidas(mid, [agora], `MQTT (${topico})`);
-    } else if (topico === 'prensa/sensor1' && payload === '1') {
-      recebeBatidas(mid, [agora], `MQTT legado (${topico})`);
+    if (topico === 'prensa/heartbeat') {
+      for (const id of Object.keys(maquinas)) visto[id] = [agora, `MQTT (${topico})`];
+      return;
+    }
+    const partes = topico.split('/');
+    if (partes[0] !== 'prensa' || partes.length < 2 || partes.length > 3) return;
+    const sid = partes[1];
+    if (!RE_SENSOR_ID.test(sid)) return;
+    const tipo = partes.length === 3 ? partes[2] : 'legado';
+    const nivel = payload === '0' || payload === '1' ? payload : null;
+
+    const v = sensoresVistos[sid] || (sensoresVistos[sid] = { ultimo: agora, topico, estado: null });
+    v.ultimo = agora;
+    v.topico = topico;
+    const ehEstado = tipo === 'estado' || tipo === 'legado';
+    if (nivel !== null && ehEstado) v.estado = nivel;
+
+    const local = localizaSensor(sid);
+    if (!local) return; // ainda nao cadastrado: aparece em /sensores para voce atribuir
+    const { m, s } = local;
+    visto[m.id] = [agora, `MQTT (${topico})`];
+    if (s.papel !== 'batida') return; // sensor auxiliar: so informa o nivel do sinal
+    if (nivel !== null && ehEstado) estadoSensor[m.id] = nivel;
+    if ((tipo === 'batida' || tipo === 'legado') && payload === '1') {
+      recebeBatidas(m.id, [agora], `MQTT (${topico})`);
     }
   } catch (e) {
     console.log(`Erro ao processar MQTT: ${e.message}`);
   }
 }
 
-function iniciaMqtt() {
+// ---------------------------------------------------------------- cadastro de maquinas e sensores (rotas /api/maquinas, /api/maquinas/sensores)
+const enviaJson = (res, code, obj) => enviar(res, code, JSON.stringify(obj), 'application/json; charset=utf-8');
+
+function proximoIdMaquina() {
+  let n = 1;
+  while (maquinas[`prensa${n}`]) n++;
+  return `prensa${n}`;
+}
+
+function salvaEBroadcast() {
+  salvaConfig();
+  broadcast(snapshotTodas(agoraS()));
+}
+
+function cadastraMaquina(res, body) {
+  let d;
+  try {
+    d = JSON.parse(body || '{}');
+  } catch (_) {
+    return enviaJson(res, 400, { erro: 'JSON invalido' });
+  }
+  const id = d.id ? String(d.id) : proximoIdMaquina();
+  if (!RE_MAQ_ID.test(id)) return enviaJson(res, 400, { erro: 'id invalido: use letras minusculas, numeros, _ ou - (ate 30)' });
+  const novo = !maquinas[id];
+  const dados = { ...d };
+  delete dados.id;
+  try {
+    if (novo) maquinas[id] = new Maquina(id, { nome: id, sensores: [] });
+    maquinas[id].config(dados); // lanca erro se algum numero for invalido
+  } catch (e) {
+    if (novo) delete maquinas[id];
+    return enviaJson(res, 400, { erro: 'valor invalido: ' + e.message });
+  }
+  salvaEBroadcast();
+  enviaJson(res, 200, { ok: true, id, criada: novo });
+}
+
+function excluiMaquina(res, reqUrl) {
+  const id = new URL(reqUrl, 'http://x').searchParams.get('id') || '';
+  if (!maquinas[id]) return enviaJson(res, 404, { erro: 'maquina nao encontrada' });
+  delete maquinas[id];
+  delete estadoSensor[id];
+  delete visto[id];
+  salvaEBroadcast();
+  enviaJson(res, 200, { ok: true });
+}
+
+function atribuiSensor(res, body) {
+  let d;
+  try {
+    d = JSON.parse(body || '{}');
+  } catch (_) {
+    return enviaJson(res, 400, { erro: 'JSON invalido' });
+  }
+  const sid = String(d.sensor || '').trim();
+  const papel = d.papel === 'batida' || d.papel === 'estado' ? d.papel : null;
+  const m = maquinas[String(d.maquina || '')];
+  if (!RE_SENSOR_ID.test(sid)) return enviaJson(res, 400, { erro: 'id do sensor invalido (ex.: sensor2)' });
+  if (!papel) return enviaJson(res, 400, { erro: 'papel deve ser "batida" ou "estado"' });
+  if (!m) return enviaJson(res, 404, { erro: 'maquina nao encontrada' });
+  const outra = localizaSensor(sid);
+  if (outra && outra.m.id !== m.id) {
+    return enviaJson(res, 409, { erro: `${sid} ja esta atribuido a ${outra.m.id}. Remova-o de la antes.` });
+  }
+  if (!Array.isArray(m.cfg.sensores)) m.cfg.sensores = [];
+  const lista = m.cfg.sensores;
+  if (papel === 'batida' && lista.some((s) => s.papel === 'batida' && s.id !== sid)) {
+    return enviaJson(res, 409, { erro: `${m.id} ja tem um sensor de batida. Os demais devem ser "estado".` });
+  }
+  const nome = String(d.nome || (papel === 'batida' ? 'Sensor de batida' : 'Sensor auxiliar')).slice(0, 60);
+  const existente = lista.find((s) => s.id === sid);
+  if (existente) Object.assign(existente, { papel, nome });
+  else lista.push({ id: sid, papel, nome });
+  salvaEBroadcast();
+  enviaJson(res, 200, { ok: true });
+}
+
+function removeSensor(res, reqUrl) {
+  const q = new URL(reqUrl, 'http://x').searchParams;
+  const m = maquinas[q.get('maquina') || ''];
+  const sid = q.get('sensor') || '';
+  if (!m) return enviaJson(res, 404, { erro: 'maquina nao encontrada' });
+  const lista = Array.isArray(m.cfg.sensores) ? m.cfg.sensores : [];
+  const i = lista.findIndex((s) => s.id === sid);
+  if (i < 0) return enviaJson(res, 404, { erro: 'sensor nao atribuido a esta maquina' });
+  if (lista[i].papel === 'batida') delete estadoSensor[m.id];
+  lista.splice(i, 1);
+  salvaEBroadcast();
+  enviaJson(res, 200, { ok: true });
+}
+
+// aedes 1.x e so ESM e o broker se cria com `await Aedes.createBroker()`; a 0.x e CommonJS.
+// O import() dinamico funciona nas duas.
+async function criaBroker() {
+  const mod = await import('aedes');
+  if (mod.Aedes && typeof mod.Aedes.createBroker === 'function') return mod.Aedes.createBroker();
+  return mod.default();
+}
+
+async function iniciaMqtt() {
   if (!MQTT_HOST) {
-    const aedes = require('aedes')();
+    const aedes = await criaBroker();
     aedes.on('publish', (pacote, cliente) => {
       if (cliente) onMqttMessage(pacote.topic, pacote.payload);
     });
@@ -264,6 +448,12 @@ function tratar(req, res) {
   const url = req.url.split('?')[0];
   if (req.method === 'GET') {
     if (url === '/' || url === '/index.html') return enviar(res, 200, PAGINA(), 'text/html; charset=utf-8');
+    // temas visuais: public/estilo-<nome>.css (o nome nao aceita barras, entao nao sai da pasta public)
+    const css = url.match(/^\/(estilo-[\w-]+\.css)$/);
+    if (css) {
+      const arq = path.join(BASE, 'public', css[1]);
+      if (fs.existsSync(arq)) return enviar(res, 200, fs.readFileSync(arq), 'text/css; charset=utf-8');
+    }
     if (url === '/api/health') {
       const ult = Math.max(0, ...Object.values(visto).map((v) => v[0]));
       return enviar(
@@ -279,6 +469,40 @@ function tratar(req, res) {
       );
     }
     if (url === '/api/state') return enviar(res, 200, JSON.stringify(snapshotTodas(agoraS())), 'application/json');
+    if (url === '/relatorio') {
+      return enviar(res, 200, fs.readFileSync(path.join(BASE, 'public', 'relatorio.html')), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/relatorio') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const mid = q.get('maquina') || MAQUINA_PADRAO;
+      const m = maquinas[mid];
+      if (!m) return enviar(res, 404, 'maquina desconhecida');
+      const agora = agoraS();
+      const periodo = q.get('periodo') || 'hoje';
+      const duracao = { '15m': 900, '1h': 3600, '4h': 14400, '8h': 28800, '24h': 86400 }[periodo];
+      const de = duracao ? agora - duracao : new Date().setHours(0, 0, 0, 0) / 1000; // 'hoje' = desde 00:00
+      const rel = relatorio.calcula({
+        prod: relatorio.leCsv(PROD_CSV).filter((r) => r.maquina === mid),
+        alarmes: relatorio.leCsv(ALARM_CSV).filter((a) => a.maquina === mid),
+        agora, de,
+        spm: m.cfg.spm, tol: m.cfg.tol, paradaS: m.cfg.parada_s,
+        vivo: m.parcial(), paradaAtiva: m.parada,
+      });
+      rel.maquina = { id: mid, nome: m.cfg.nome };
+      rel.periodoNome = periodo;
+      rel.geradoEm = agora;
+      if (q.get('formato') === 'csv') {
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="relatorio_${mid}_${periodo}.csv"`,
+        });
+        return res.end(relatorio.paraCsv(rel, m.cfg.nome));
+      }
+      return enviar(res, 200, JSON.stringify(rel), 'application/json');
+    }
+    if (url === '/sensores') return enviar(res, 200, fs.readFileSync(path.join(BASE, 'public', 'sensores.html')), 'text/html; charset=utf-8');
+    if (url === '/api/maquinas') return enviaJson(res, 200, Object.values(snapshotTodas(agoraS()).maquinas));
+    if (url === '/api/sensores') return enviaJson(res, 200, listaSensores(agoraS()));
     if (url === '/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       const agora = agoraS();
@@ -308,6 +532,15 @@ function tratar(req, res) {
         const ok = trataBatida(body, `HTTP ${req.socket.remoteAddress}`);
         return enviar(res, ok ? 200 : 400, ok ? 'OK' : 'payload invalido');
       }
+      if (url === '/api/teste') {
+        try {
+          aplicaTeste(JSON.parse(body), agoraS());
+          broadcast(snapshotTodas(agoraS()));
+          return enviar(res, 200, 'OK');
+        } catch (_) {
+          return enviar(res, 400, 'teste invalido');
+        }
+      }
       if (url === '/api/config') {
         try {
           const d = JSON.parse(body);
@@ -333,8 +566,15 @@ function tratar(req, res) {
         broadcast(snapshotTodas(agoraS()));
         return enviar(res, 200, 'OK');
       }
+      if (url === '/api/maquinas') return cadastraMaquina(res, body);
+      if (url === '/api/maquinas/sensores') return atribuiSensor(res, body);
       return enviar(res, 404, 'nao encontrado');
     });
+  }
+  if (req.method === 'DELETE') {
+    if (url === '/api/maquinas') return excluiMaquina(res, req.url);
+    if (url === '/api/maquinas/sensores') return removeSensor(res, req.url);
+    return enviar(res, 404, 'nao encontrado');
   }
   enviar(res, 405, 'metodo nao permitido');
 }
@@ -350,7 +590,13 @@ function ouvir(porta, rotulo) {
 
 function main() {
   carregaConfig();
-  iniciaMqtt();
+  // marca a partida no alarmes.csv: o relatorio usa isso para nao contar como parada o tempo com o servidor desligado
+  gravaAlerta({ t: agoraS(), maquina: MAQUINA_PADRAO, nivel: 'info', tipo: 'servidor_iniciado', msg: 'Servidor iniciado' });
+  iniciaMqtt().catch((e) => {
+    mqttStatus = 'erro ao iniciar o broker';
+    mqttUltimoErro = e.message;
+    console.log(`[MQTT] ERRO ao iniciar o broker: ${e.message}`);
+  });
   ouvir(HTTP_PORT, 'dashboard');
   if (BOARD_PORT !== HTTP_PORT) ouvir(BOARD_PORT, 'firmware legado');
 
@@ -363,6 +609,7 @@ function main() {
   console.log(`Acesso pela rede: http://${ip}:${HTTP_PORT}`);
   console.log(`Broker MQTT: ${MQTT_HOST ? `${MQTT_HOST}:${MQTT_PORT} (externo)` : `embutido (aedes) na porta ${MQTT_PORT}`}`);
   console.log(`Ritmo programado em: ${CFG_FILE} | registros: ${path.basename(PROD_CSV)}, ${path.basename(ALARM_CSV)}`);
+  if (MODO_TESTE) console.log(`*** MODO TESTE: os dados ficam isolados em ${DADOS} (nao vao para a producao) ***`);
 }
 
 main();

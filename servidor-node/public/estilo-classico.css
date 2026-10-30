@@ -1,0 +1,18 @@
+/* Tema classico: o visual original da dashboard. */
+:root{--bg:#10151c;--card:#1a222d;--tx:#e8edf3;--mut:#8896a8;--line:#2b3747;
+--ok:#2ecc71;--atencao:#f1c40f;--falha:#ff4d4d;--parada:#ff4d4d;--ociosa:#8896a8;--medindo:#4aa3ff;--semcom:#ff4d4d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px system-ui,sans-serif;padding:16px;max-width:1200px;margin:auto}
+h1{font-size:20px;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.pill{font-size:13px;padding:4px 10px;border-radius:99px;background:#4a5666}.pill.on{background:var(--ok);color:#052}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px}
+.card{background:var(--card);border-radius:12px;padding:14px}
+.lbl{color:var(--mut);font-size:13px}.val{font-size:34px;font-weight:700;margin-top:4px}.sub{color:var(--mut);font-size:12px;margin-top:2px}
+#banner{border-radius:12px;padding:16px 20px;margin-bottom:12px;background:var(--card);border-left:10px solid var(--ociosa)}
+#bt{font-size:26px;font-weight:800}#bm{color:var(--mut);margin-top:4px}
+canvas{width:100%;height:170px;display:block}
+button,input,select,a.btn{font:inherit;color:var(--tx);background:#2b3747;border:0;border-radius:8px;padding:8px 12px}
+button,a.btn{cursor:pointer}button:hover,a.btn:hover{background:#38475c}
+input{width:100%;margin-top:4px}
+.cfg{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));align-items:end}
+#log{font:13px ui-monospace,monospace;max-height:220px;overflow:auto}
+#log div{padding:2px 0;color:var(--mut)}#log .atencao{color:var(--atencao)}#log .falha{color:var(--falha)}#log .info{color:var(--ok)}

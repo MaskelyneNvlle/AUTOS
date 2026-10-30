@@ -1,0 +1,109 @@
+/* Tema "moderno": vidro escuro, brilho por estado, animações. Mantém os mesmos nomes de variáveis do tema clássico
+   (o JavaScript dos gráficos lê --ok, --falha, --mut, --line etc.). */
+:root{
+  --bg:#0b1020; --bg2:#121a33; --card:rgba(255,255,255,.055); --card-b:rgba(255,255,255,.10);
+  --tx:#eef2ff; --mut:#93a0c4; --line:rgba(255,255,255,.10);
+  --ok:#34d399; --atencao:#fbbf24; --falha:#fb5b6b; --parada:#fb5b6b; --ociosa:#8b97b8; --medindo:#60a5fa; --semcom:#fb5b6b;
+  --accent:#7c8cff; --accent2:#22d3ee; --cs:var(--ociosa);
+  --raio:18px; --sombra:0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{
+  margin:0 auto; max-width:1240px; padding:22px 18px 40px; color:var(--tx);
+  font:16px/1.45 "Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  background:
+    radial-gradient(900px 500px at 8% -10%, rgba(124,140,255,.22), transparent 60%),
+    radial-gradient(800px 500px at 100% 0%, rgba(34,211,238,.14), transparent 55%),
+    linear-gradient(180deg,var(--bg),var(--bg2)) fixed;
+  min-height:100vh;
+}
+
+/* Cabeçalho */
+h1{
+  font-size:22px; font-weight:700; letter-spacing:.2px; margin:0 0 18px;
+  display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;
+}
+h1>span:first-child{
+  background:linear-gradient(90deg,#fff,#b9c3ff 60%,var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+h1>span:last-child{display:flex; align-items:center; flex-wrap:wrap; gap:10px}
+
+.pill{
+  display:inline-flex; align-items:center; gap:8px; font-size:13px; padding:6px 12px; border-radius:99px;
+  background:rgba(251,91,107,.14); color:#ffc2c9; border:1px solid rgba(251,91,107,.35);
+}
+.pill::before{content:""; width:8px; height:8px; border-radius:50%; background:currentColor; opacity:.9}
+.pill.on{background:rgba(52,211,153,.14); color:#a7f3d0; border-color:rgba(52,211,153,.4)}
+.pill.on::before{animation:ping 1.6s ease-out infinite}
+@keyframes ping{0%{box-shadow:0 0 0 0 rgba(52,211,153,.7)}100%{box-shadow:0 0 0 9px rgba(52,211,153,0)}}
+
+/* Botões e campos */
+button,input,select,a.btn{
+  font:inherit; color:var(--tx); border:1px solid var(--line); border-radius:12px; padding:9px 14px;
+  background:rgba(255,255,255,.07); transition:transform .12s, background .2s, border-color .2s, box-shadow .2s;
+}
+button,a.btn{cursor:pointer; font-weight:600}
+button:hover,a.btn:hover{background:rgba(255,255,255,.13); border-color:rgba(255,255,255,.22); transform:translateY(-1px)}
+button:active,a.btn:active{transform:translateY(1px) scale(.98)}
+button.principal,.cfg button{background:linear-gradient(135deg,var(--accent),#5468ff); border-color:transparent; box-shadow:0 6px 16px rgba(92,108,255,.35)}
+button.principal:hover,.cfg button:hover{filter:brightness(1.1)}
+input{width:100%; margin-top:6px}
+input:focus,select:focus,button:focus-visible{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(124,140,255,.35)}
+label{display:block; font-size:12px; color:var(--mut)}
+
+/* Banner de estado, com brilho e cor conforme o estado (data-status vem do JavaScript) */
+#banner{
+  position:relative; overflow:hidden; border-radius:var(--raio); padding:22px 26px; margin-bottom:16px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--cs) 22%,transparent),var(--card) 70%);
+  border:1px solid color-mix(in srgb,var(--cs) 45%,transparent); border-left-width:10px;
+  box-shadow:0 0 0 1px rgba(255,255,255,.03) inset, 0 12px 40px color-mix(in srgb,var(--cs) 25%,transparent);
+  transition:box-shadow .4s, background .4s;
+}
+#banner[data-status=ok]{--cs:var(--ok)}
+#banner[data-status=atencao]{--cs:var(--atencao)}
+#banner[data-status=falha],#banner[data-status=parada],#banner[data-status=sem_comunicacao]{--cs:var(--falha)}
+#banner[data-status=medindo]{--cs:var(--medindo)}
+#banner[data-status=ociosa]{--cs:var(--ociosa)}
+#banner[data-status=falha],#banner[data-status=parada],#banner[data-status=sem_comunicacao]{animation:alerta 1.4s ease-in-out infinite}
+@keyframes alerta{50%{box-shadow:0 0 0 1px rgba(255,255,255,.03) inset, 0 12px 60px rgba(251,91,107,.55)}}
+#bt{font-size:30px; font-weight:800; letter-spacing:.5px}
+#bm{color:var(--mut); margin-top:6px}
+
+/* Cartões */
+.grid{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); margin-bottom:16px}
+.card{
+  position:relative; background:var(--card); border:1px solid var(--card-b); border-radius:var(--raio); padding:18px;
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); box-shadow:var(--sombra);
+  transition:transform .2s, border-color .2s, box-shadow .2s;
+}
+.grid .card:hover{transform:translateY(-4px); border-color:rgba(124,140,255,.55); box-shadow:0 16px 40px rgba(0,0,0,.45)}
+.lbl{color:var(--mut); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.8px}
+.val{font-size:40px; font-weight:800; margin-top:6px; font-variant-numeric:tabular-nums; line-height:1.1}
+.sub{color:var(--mut); font-size:12px; margin-top:6px}
+.card.flash{animation:flash .45s ease-out}
+@keyframes flash{0%{box-shadow:0 0 0 0 rgba(124,140,255,.9); border-color:#fff}100%{box-shadow:var(--sombra)}}
+
+/* Gráficos */
+canvas{width:100%; height:190px; display:block; border-radius:12px}
+
+/* Formulário de ritmo programado */
+.cfg{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); align-items:end}
+
+/* Alertas */
+#log{font:13px ui-monospace,"Cascadia Mono",Consolas,monospace; max-height:260px; overflow:auto; padding-right:6px}
+#log div{padding:8px 12px; margin:6px 0; border-radius:10px; background:rgba(255,255,255,.04); border-left:4px solid var(--mut);
+  color:var(--tx); animation:entra .35s ease-out}
+#log .atencao{border-left-color:var(--atencao)}
+#log .falha{border-left-color:var(--falha); background:rgba(251,91,107,.10)}
+#log .info{border-left-color:var(--ok)}
+@keyframes entra{from{opacity:0; transform:translateY(-8px)}}
+#log::-webkit-scrollbar{width:8px}
+#log::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18); border-radius:8px}
+
+/* Telas pequenas (celular/tablet) e tela cheia para TV de chão de fábrica */
+@media (max-width:600px){#bt{font-size:22px} .val{font-size:32px} h1{font-size:18px}}
+:fullscreen body{padding:30px 40px}
+:fullscreen #bt{font-size:44px}
+:fullscreen .val{font-size:56px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}

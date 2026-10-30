@@ -3,9 +3,21 @@
     "nome": "Prensa 1",
     "modelo": "Formadora de grampo",
     "spm": 155,
-    "tol": 10,
+    "tol": 7,
     "parada_s": 3,
     "falhas_limite": 3,
-    "instab": 25
+    "instab": 25,
+    "sensores": [
+      {
+        "id": "sensor1",
+        "papel": "batida",
+        "nome": "Sensor principal"
+      },
+      {
+        "id": "sensor2",
+        "papel": "estado",
+        "nome": "fim de curso"
+      }
+    ]
   }
 }

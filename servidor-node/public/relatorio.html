@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-br"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relatório parcial — Prensa</title>
+<link id="tema" rel="stylesheet" href="/estilo-moderno.css">
+<script>try{if(localStorage.getItem("tema")==="classico")document.getElementById("tema").href="/estilo-classico.css"}catch(e){}</script>
+<link rel="stylesheet" href="/estilo-comum.css">
+</head><body>
+<h1><span id="titulo">Relatório parcial de desempenho</span><span id="gerado" class="dica"></span></h1>
+
+<div class="rel-barra">
+ <a class="btn" href="/">← Dashboard</a>
+ <label style="display:flex;align-items:center;gap:8px">Período
+  <select id="periodo" onchange="carrega()">
+   <option value="15m">Últimos 15 min</option>
+   <option value="1h">Última 1 hora</option>
+   <option value="4h">Últimas 4 horas</option>
+   <option value="8h">Últimas 8 horas (turno)</option>
+   <option value="hoje" selected>Hoje (desde 00:00)</option>
+   <option value="24h">Últimas 24 horas</option>
+  </select></label>
+ <button onclick="carrega()">Atualizar</button>
+ <button onclick="baixaCsv()">Baixar resumo (CSV)</button>
+ <button onclick="window.print()">Imprimir / PDF</button>
+ <button onclick="alternaTema()">Tema</button>
+</div>
+
+<div id="vazio" class="card" hidden>Ainda não há dados neste período. O relatório usa o que o servidor grava em <b>producao.csv</b> (um registro por minuto com batidas); aguarde a máquina trabalhar ou escolha um período maior.</div>
+
+<div id="conteudo" hidden>
+ <div class="card" style="margin-bottom:12px">
+  <div class="veredito">
+   <div class="anel" id="anel"><div><span><b id="ef">0%</b><small>eficiência</small></span></div></div>
+   <div>
+    <div class="lbl">Eficiência de ritmo</div>
+    <div id="vtxt" style="font-size:26px;font-weight:800">—</div>
+    <div class="sub" id="vformula"></div>
+    <div class="sub" id="vper"></div>
+   </div>
+  </div>
+ </div>
+
+ <div class="kpis">
+  <div class="card kpi"><div class="lbl">Batidas no período</div><div class="val" id="k_bat">0</div><div class="sub" id="k_bat_s"></div></div>
+  <div class="card kpi"><div class="lbl">Ritmo médio operando</div><div class="val" id="k_rit">0</div><div class="sub" id="k_rit_s"></div></div>
+  <div class="card kpi"><div class="lbl">Disponibilidade</div><div class="val" id="k_disp">0%</div><div class="sub" id="k_disp_s"></div></div>
+  <div class="card kpi"><div class="lbl">Desempenho</div><div class="val" id="k_des">0%</div><div class="sub">batidas ÷ batidas possíveis no ritmo programado, durante o tempo operando</div></div>
+  <div class="card kpi"><div class="lbl">Paradas</div><div class="val" id="k_par">0</div><div class="sub" id="k_par_s"></div></div>
+  <div class="card kpi"><div class="lbl">Entre paradas (média)</div><div class="val" id="k_mtbf">—</div><div class="sub">tempo médio operando entre uma parada e a seguinte</div></div>
+  <div class="card kpi"><div class="lbl">Batidas perdidas</div><div class="val" id="k_perd">0</div><div class="sub" id="k_perd_s"></div></div>
+  <div class="card kpi"><div class="lbl">Pulsos duplos (ruído)</div><div class="val" id="k_dup">0</div><div class="sub" id="k_dup_s"></div></div>
+ </div>
+
+ <div class="card" style="margin-bottom:12px"><div class="lbl">Batidas por minuto no período</div>
+  <div class="leg"><span><i class="d" style="background:var(--ok)"></i>dentro da faixa programada</span><span><i class="d" style="background:var(--atencao)"></i>abaixo/acima da faixa (ou minuto parcial)</span><span><i class="d" style="background:var(--falha)"></i>nenhuma batida</span></div>
+  <canvas id="c" style="height:200px"></canvas></div>
+
+ <div class="card" style="margin-bottom:12px"><div class="lbl" style="margin-bottom:8px">Paradas no período (mais recentes primeiro)</div>
+  <table class="tab"><thead><tr><th>Início</th><th>Fim</th><th>Duração</th></tr></thead><tbody id="tb"></tbody></table>
+  <div id="sempar" class="sub" hidden>Nenhuma parada registrada no período.</div></div>
+
+ <div class="card" style="margin-bottom:12px"><div class="lbl" style="margin-bottom:8px">Alertas no período</div><div id="alr" class="sim-chk"></div></div>
+</div>
+
+<div class="card"><div class="lbl" style="margin-bottom:8px">Como ler este relatório</div>
+ <ul class="notas">
+  <li><b>Disponibilidade</b> = tempo operando ÷ tempo observado. Tempo parado são os períodos entre o alerta “Máquina PAROU” e a retomada.</li>
+  <li><b>Desempenho</b> = batidas feitas ÷ batidas que seriam feitas no ritmo programado durante o tempo operando. Acima de 100% significa mais rápida que o programado.</li>
+  <li><b>Eficiência de ritmo</b> = disponibilidade × desempenho (limitado a 100%). Faixas de referência: <span class="sel-ok">bom ≥ <span id="lb">85</span>%</span>, <span class="sel-atencao">atenção ≥ <span id="la">65</span>%</span>, <span class="sel-baixo">baixo abaixo disso</span>.</li>
+  <li>É um índice de <b>ritmo e paradas</b>. Não mede a qualidade das peças (refugo), então não é um OEE completo.</li>
+  <li><b>Tempo observado</b> começa no primeiro minuto com batidas do período; antes disso o servidor não tinha dados. Se o servidor ficou desligado, esse intervalo não aparece como parada.</li>
+  <li>Perdidas e duplas vêm da análise do intervalo entre batidas (estimativas). Muitas duplas indicam ruído/repique no sinal do sensor.</li>
+ </ul></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const fmt=(n,d=1)=>Number(n).toFixed(d).replace('.',',');
+const hm=t=>new Date(t*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+const dh=t=>new Date(t*1000).toLocaleString();
+function dur(s){s=Math.round(s);if(s<60)return s+' s';const m=Math.floor(s/60),r=s%60;
+ if(m<60)return m+' min '+String(r).padStart(2,'0')+' s';const h=Math.floor(m/60);return h+' h '+String(m%60).padStart(2,'0')+' min';}
+function alternaTema(){const l=$('tema'),novo=l.getAttribute('href').includes('moderno')?'classico':'moderno';
+ l.href='/estilo-'+novo+'.css';try{localStorage.setItem('tema',novo);}catch(e){}}
+const cor=n=>getComputedStyle(document.body).getPropertyValue(n).trim()||'#888';
+let REL=null;
+const p0=new URLSearchParams(location.search).get('periodo');if(p0)$('periodo').value=p0;
+
+async function carrega(){
+ const per=$('periodo').value;history.replaceState(null,'','?periodo='+per);
+ try{REL=await (await fetch('/api/relatorio?periodo='+per)).json();}catch(e){return;}
+ mostra();}
+function baixaCsv(){location.href='/api/relatorio?formato=csv&periodo='+$('periodo').value;}
+
+function mostra(){const r=REL;
+ $('titulo').textContent='Relatório parcial — '+(r.maquina?r.maquina.nome:'Prensa');
+ $('gerado').textContent='gerado às '+hm(r.geradoEm);
+ $('vazio').hidden=!r.vazio;$('conteudo').hidden=!!r.vazio;if(r.vazio)return;
+ $('lb').textContent=r.limites.bom;$('la').textContent=r.limites.atencao;
+ const i=r.indices,p=r.producao,t=r.tempos,pa=r.paradas;
+ const cl=r.veredito==='bom'?'--ok':r.veredito==='atencao'?'--atencao':'--falha';
+ const anel=$('anel');anel.style.setProperty('--p',Math.min(100,i.eficiencia));anel.style.setProperty('--c','var('+cl+')');
+ $('ef').textContent=fmt(i.eficiencia,0)+'%';
+ $('vtxt').textContent=r.veredito==='bom'?'BOM':r.veredito==='atencao'?'ATENÇÃO':'BAIXO';$('vtxt').className='sel-'+r.veredito;
+ $('vformula').textContent='Disponibilidade '+fmt(i.disponibilidade)+'% × Desempenho '+fmt(Math.min(100,i.desempenho))+'%';
+ $('vper').textContent='De '+dh(r.periodo.inicioObservado)+' até '+dh(r.periodo.ate)+' · observado '+dur(r.periodo.observado)+
+  (r.periodo.foraDoAr?' · servidor desligado '+dur(r.periodo.foraDoAr)+' (descontado)':'');
+ $('k_bat').textContent=p.batidas;$('k_bat_s').textContent='esperado no ritmo programado: '+p.esperadas;
+ $('k_rit').textContent=fmt(p.ritmoOperacao,0)+'/min';$('k_rit_s').textContent='programado '+r.parametros.spm+'/min · pico '+p.picoMinuto+'/min';
+ $('k_disp').textContent=fmt(i.disponibilidade,0)+'%';$('k_disp_s').textContent='operando '+dur(t.operando)+' · parado '+dur(t.parado);
+ $('k_des').textContent=fmt(i.desempenho,0)+'%';
+ $('k_par').textContent=pa.quantidade;$('k_par_s').textContent=pa.quantidade?'total '+dur(pa.total)+' · maior '+dur(pa.maior)+' · média '+dur(pa.media):'nenhuma parada';
+ $('k_mtbf').textContent=pa.mtbf==null?'—':dur(pa.mtbf);
+ $('k_perd').textContent=p.perdidas;$('k_perd_s').textContent=fmt(i.pctPerdidas)+'% das batidas esperadas';
+ $('k_dup').textContent=p.duplas;$('k_dup_s').textContent=fmt(i.pctDuplas)+'% de pulsos extras sobre as batidas';
+ $('tb').innerHTML=pa.lista.map(x=>'<tr><td>'+dh(x.inicio)+'</td><td>'+(x.emAndamento?'<b class="sel-baixo">em andamento</b>':dh(x.fim))+'</td><td>'+dur(x.duracao)+'</td></tr>').join('');
+ $('sempar').hidden=pa.quantidade>0;
+ const nomes={batida_perdida:'batida perdida',batida_dupla:'pulso duplo',falhas_seguidas:'falhas seguidas',parada:'parada',retomada:'retomada',ritmo_baixo:'ritmo baixo',ritmo_alto:'ritmo alto',instavel:'ritmo instável'};
+ const ks=Object.keys(r.alertasPorTipo).filter(k=>!k.endsWith('_ok'));
+ $('alr').innerHTML=ks.length?ks.map(k=>'<span class="chip '+(k==='retomada'?'ok':'extra')+'">'+(nomes[k]||k)+': '+r.alertasPorTipo[k]+'</span>').join(''):'<span class="chip ok">nenhum alerta no período</span>';
+ grafico();}
+
+function grafico(){if(!REL||REL.vazio)return;const cv=$('c'),r=cv.getBoundingClientRect(),d=devicePixelRatio||1;
+ cv.width=r.width*d;cv.height=r.height*d;const x=cv.getContext('2d');x.scale(d,d);const w=r.width,h=r.height;
+ const S=REL.serie,spm=REL.parametros.spm,tol=REL.parametros.tol,lo=spm*(1-tol/100),hi=spm*(1+tol/100);
+ const top=Math.max(spm*1.3,...S.map(s=>s.batidas))*1.05,Y=v=>(h-22)-(v/top)*(h-30),n=S.length,bw=w/n;
+ x.fillStyle='rgba(46,204,113,.15)';x.fillRect(0,Y(hi),w,Y(lo)-Y(hi));
+ x.strokeStyle='rgba(46,204,113,.6)';x.beginPath();x.moveTo(0,Y(spm));x.lineTo(w,Y(spm));x.stroke();
+ x.fillStyle=cor('--mut');x.font='11px system-ui';x.fillText(spm+'/min programado',4,Y(spm)-4);
+ S.forEach((s,i)=>{const px=i*bw;
+  if(s.batidas===0){x.fillStyle=cor('--falha');x.fillRect(px,h-22,Math.max(1,bw-1),3);return;}
+  x.fillStyle=(s.batidas>=lo&&s.batidas<=hi)?cor('--ok'):cor('--atencao');
+  x.fillRect(px,Y(s.batidas),Math.max(1,bw-1),h-22-Y(s.batidas));});
+ x.fillStyle=cor('--mut');const passo=Math.max(1,Math.ceil(n/8));
+ for(let i=0;i<n;i+=passo)x.fillText(hm(S[i].t),Math.min(w-34,i*bw),h-6);}
+addEventListener('resize',grafico);
+carrega();setInterval(carrega,10000);
+</script></body></html>

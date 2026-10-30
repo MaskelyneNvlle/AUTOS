@@ -17,6 +17,7 @@ const opt = (nome, padrao) => {
 };
 const cenario = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--'))) || 'lista';
 const HOST = opt('host', 'localhost');
+const SENSOR = opt('sensor', 'sensor1'); // qual sensor simular (o topico e prensa/<sensor>/...)
 const PORTA = Number(opt('porta', 1884));
 const SPM = Number(opt('spm', 155)); // ritmo "normal" simulado; deve ser igual ao programado na dashboard
 const T = 60 / SPM;
@@ -97,6 +98,21 @@ function monta(c) {
   return ev.sort((x, y) => x.t - y.t);
 }
 
+// Tipos de alerta que a dashboard deve registrar em cada cenario (a faixa de TESTE confere um a um).
+// 'sem_comunicacao' nao e um alerta gravado: a dashboard confere pelo estado do banner.
+const ESPERA = {
+  normal: [],
+  perdida: ['batida_perdida'],
+  dupla: ['batida_dupla'],
+  ruido: ['batida_dupla'],
+  ritmo_baixo: ['ritmo_baixo'],
+  ritmo_alto: ['ritmo_alto'],
+  instavel: ['instavel'],
+  falhas: ['batida_perdida', 'falhas_seguidas'],
+  parada: ['parada', 'retomada'],
+  sem_comunicacao: ['parada', 'sem_comunicacao'],
+};
+
 function lista() {
   console.log('Cenarios disponiveis:\n');
   for (const [nome, c] of Object.entries(CENARIOS)) console.log(`  ${nome.padEnd(16)} ${c.descricao}`);
@@ -118,16 +134,29 @@ function roda(nome) {
     cli.on('connect', () => {
       const ini = Date.now();
       let n = 0;
+      // avisa o servidor qual teste esta rodando: a dashboard mostra a faixa "SIMULACAO" com o que se espera ver
+      cli.publish('prensa/simulacao', JSON.stringify({
+        cenario: nome,
+        descricao: c.descricao,
+        esperado: c.esperado,
+        esperaTipos: ESPERA[nome] || [],
+        duracao: Math.round(ev[ev.length - 1].t),
+        spm: SPM,
+      }));
       const prox = () => {
         const e = ev.shift();
         if (!e) return;
         const espera = ini + e.t * 1000 - Date.now();
         setTimeout(() => {
-          if (e.tipo === 'batida') { cli.publish('prensa/sensor1/estado', '1'); cli.publish('prensa/sensor1/batida', '1'); n++; }
-          else if (e.tipo === 'pulso') { cli.publish('prensa/sensor1/batida', '1'); }
-          else if (e.tipo === 'estado0') cli.publish('prensa/sensor1/estado', '0');
+          if (e.tipo === 'batida') { cli.publish(`prensa/${SENSOR}/estado`, '1'); cli.publish(`prensa/${SENSOR}/batida`, '1'); n++; }
+          else if (e.tipo === 'pulso') { cli.publish(`prensa/${SENSOR}/batida`, '1'); }
+          else if (e.tipo === 'estado0') cli.publish(`prensa/${SENSOR}/estado`, '0');
           else if (e.tipo === 'heartbeat') cli.publish('prensa/heartbeat', 'ping');
-          else if (e.tipo === 'fim') { console.log(`    Concluido: ${n} batidas publicadas.`); cli.end(false, resolve); return; }
+          else if (e.tipo === 'fim') {
+            console.log(`    Concluido: ${n} batidas publicadas.`);
+            cli.publish('prensa/simulacao', JSON.stringify({ fim: true }), () => cli.end(false, resolve));
+            return;
+          }
           prox();
         }, Math.max(0, espera));
       };
