@@ -4,4 +4,10 @@
 .vscode/launch.json
 .vscode/ipch
 
-servidor-node/node_modules
+# Servidor Node
+servidor-node/node_modules/
+servidor-node/dados_teste/
+# registros reais da producao (dados da empresa, mudam o tempo todo): nao versionar
+servidor-node/producao.csv
+servidor-node/alarmes.csv
+*.log
