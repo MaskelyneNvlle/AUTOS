@@ -1,6 +1,14 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <Arduino.h>   // tipos uint8_t/uint16_t e o restante da API do Arduino
+
+// Modo do firmware. 0 = producao (MQTT + sensores + RTU). 1 = escuta RS485 (so recebe).
+// Definido pelo ambiente do platformio.ini (build_flags = -DMODO_ESCUTA=1); padrao 0.
+#ifndef MODO_ESCUTA
+#define MODO_ESCUTA 0
+#endif
+
 // ---------------------------------------------------------------- rede e MQTT
 // Broker MQTT executado no computador servidor da Airfix.
 const char* mqtt_server = "10.0.1.202";

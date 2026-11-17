@@ -11,12 +11,12 @@
       {
         "id": "sensor1",
         "papel": "batida",
-        "nome": "Sensor principal"
+        "nome": "fim de curso"
       },
       {
         "id": "sensor2",
         "papel": "estado",
-        "nome": "fim de curso"
+        "nome": "fim de curso2"
       }
     ]
   }

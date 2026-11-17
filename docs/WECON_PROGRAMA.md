@@ -47,14 +47,14 @@ X1    ──┤ ├────────────────────�
 M8000 ──┤ ├──────────────────────────────────────────[MOV C0 D0]────────
 ```
 
-## 3. Passo a passo no PI Studio
+## 3. Passo a passo no WECON PLC Editor (o software do LX3V; o PI Studio é só para as IHMs)
 
 1. **Novo projeto:** escolha o modelo **LX3V-2416MT-A** (saída transistor, NPN).
 2. **Editor:** abra o editor de **Lista de instruções** (Instruction List) e digite as linhas da seção 1. Se preferir ladder, use a seção 2.
 3. **Compilar:** compile e corrija os erros que aparecerem. Erro de instrução desconhecida quase sempre é diferença de nome; me avise qual linha.
 4. **Conexão:** conecte o cabo mini-USB no PC e na Wecon. Em *Online*, procure ou conecte à PLC.
 5. **Gravar:** envie o programa para a PLC.
-6. **Colocar em RUN:** coloque a PLC em RUN pelo PI Studio ou pela chave da própria PLC.
+6. **Colocar em RUN:** coloque a PLC em RUN pelo PLC Editor ou pela chave da própria PLC.
 7. **Monitorar:** no monitor online, confira que:
    - `D8120` = `129` (81H) e `D8126` = `32` (20H), depois da primeira varredura;
    - `D8121` = `1`;
@@ -82,4 +82,4 @@ Aperte X0 e rode de novo: o valor deve subir a cada aperto. Se der timeout, veja
 
 - **Polaridade do sinal:** com Y0 ligada, o I34 vai para o nível que o firmware chama de ACIONADO? Confira com o roteiro `sinal` (`node teste_bancada.js sinal`). Se estiver invertido, ajustamos o `ativoAlto` no `config.h`.
 - **Contador em 9999:** para na contagem máxima. Para teste está ok; para produção, a contagem vai para o banco e a Wecon zera periodicamente.
-- **Se algum nome de instrução ou registro não existir** no seu PI Studio, me manda o erro e a versão do software, que eu corrijo.
+- **Se algum nome de instrução ou registro não existir** no seu PLC Editor, me manda o erro e a versão do software, que eu corrijo.

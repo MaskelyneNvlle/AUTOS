@@ -7,7 +7,11 @@
 # Servidor Node
 servidor-node/node_modules/
 servidor-node/dados_teste/
+servidor-node/dados_mapa/
 # registros reais da producao (dados da empresa, mudam o tempo todo): nao versionar
 servidor-node/producao.csv
 servidor-node/alarmes.csv
 *.log
+
+# logs da serial (dados de teste)
+scripts/logs/

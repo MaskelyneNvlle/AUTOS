@@ -1,9 +1,18 @@
+#include "config.h"
+
+#if MODO_ESCUTA
+// ---------------------------------------------------------------- modo ESCUTA (so RS485, sem rede)
+#include "escuta.h"
+void setup() { escuta::setup(RTU_RX, RTU_TX, RTU_DIR); }
+void loop() { escuta::loop(RTU_RX, RTU_TX); }
+
+#else
+// ---------------------------------------------------------------- modo PRODUCAO
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ETH.h>
 #include <PubSubClient.h>
 #include <ModbusMaster.h>
-#include "config.h"
 
 // Firmware da PLC32: sensores optoacoplados (I39/I34/I35) + leitura Modbus RTU da Wecon (COM2).
 // Cada sensor tem seu estado (nivel) e, se configurado, sua batida (transicao para ACIONADO).
@@ -150,6 +159,14 @@ void setup() {
 }
 
 void loop() {
+  // 0) Reenvia o estado de todos os sensores a cada 5 s. O servidor precisa do nivel
+  //    do sensor de estado (habilitador) mesmo quando ele nao mudou desde o inicio.
+  static unsigned long ultimoEstadoMs = 0;
+  if (millis() - ultimoEstadoMs >= 5000) {
+    ultimoEstadoMs = millis();
+    for (int i = 0; i < NUM_SENSORES; i++) sens[i].estadoPendente = true;
+  }
+
   // 1) Ler todos os sensores e detectar mudancas
   for (int i = 0; i < NUM_SENSORES; i++) {
     const bool agoraAcionado = lerAcionado(i);
@@ -213,3 +230,5 @@ void loop() {
   }
   delay(5);
 }
+
+#endif  // MODO_ESCUTA

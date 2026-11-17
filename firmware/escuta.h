@@ -1,14 +1,12 @@
+#pragma once
 #include <Arduino.h>
 
-// FIRMWARE DE ESCUTA (somente recepcao) para o barramento RS485 de uma maquina.
-// Nunca transmite: o pino DE/RE (GPIO2) fica em LOW, e o MAX485 so recebe.
-// Troca de formato a cada 15 s (velocidade e paridade) e mostra os bytes em hexadecimal,
-// para descobrir qual formato a IHM e o CLP usam.
-// Monitor serial: 115200 baud.
+// MODO ESCUTA (ativo quando MODO_ESCUTA = 1, ambiente "escuta" do platformio.ini).
+// Somente recepcao no RS485: nunca transmite (DE/RE em LOW). Troca o formato a cada 15 s
+// e mostra os bytes em hexadecimal, para descobrir o formato do barramento da IHM/CLP.
+// Nao inicializa Ethernet nem MQTT (por isso os LEDs do RJ45 ficam apagados neste modo).
 
-const int RS485_RX = 17;   // mesmo pino usado pelo firmware principal (Crescer)
-const int RS485_TX = 16;
-const int RS485_DIR = 2;   // LOW = so receber
+namespace escuta {
 
 struct Modo {
   uint32_t baud;
@@ -25,9 +23,9 @@ const Modo MODOS[] = {
 };
 const int NUM_MODOS = sizeof(MODOS) / sizeof(MODOS[0]);
 
-const unsigned long TROCA_MS = 15000;     // tempo em cada formato
-const unsigned long PAUSA_QUADRO_MS = 10; // silencio que separa quadros (folga acima dos 3,5 caracteres)
-const unsigned long RELATORIO_MS = 5000;  // resumo periodico
+const unsigned long TROCA_MS = 15000;      // tempo em cada formato
+const unsigned long PAUSA_QUADRO_MS = 10;  // silencio que separa quadros
+const unsigned long RELATORIO_MS = 5000;   // resumo periodico
 
 int modoAtual = -1;
 unsigned long inicioModo = 0;
@@ -37,38 +35,36 @@ unsigned long bytesDesdeRelatorio = 0;
 unsigned long ultimoRelatorio = 0;
 bool linhaAberta = false;
 
-void abreModo(int i) {
+void abreModo(int i, int rxPin, int txPin) {
   if (linhaAberta) {
     Serial.println();
     linhaAberta = false;
   }
   Serial2.end();
-  Serial2.begin(MODOS[i].baud, MODOS[i].formato, RS485_RX, RS485_TX);
+  Serial2.begin(MODOS[i].baud, MODOS[i].formato, rxPin, txPin);
   modoAtual = i;
   inicioModo = millis();
   bytesModo = 0;
   Serial.printf("\n=== MODO %d/%d: %s ===\n", i + 1, NUM_MODOS, MODOS[i].nome);
 }
 
-void setup() {
-  Serial.begin(115200);
+void setup(int rxPin, int txPin, int dirPin) {
+  Serial.begin(115200);   // monitor USB (sem isso nada aparece)
   delay(200);
-  pinMode(RS485_DIR, OUTPUT);
-  digitalWrite(RS485_DIR, LOW);   // escuta apenas
+  pinMode(dirPin, OUTPUT);
+  digitalWrite(dirPin, LOW);   // escuta apenas
   Serial.println("Escuta RS485 iniciada. Nada e transmitido.");
-  abreModo(0);
+  abreModo(0, rxPin, txPin);
   ultimoRelatorio = millis();
 }
 
-void loop() {
+void loop(int rxPin, int txPin) {
   const unsigned long agora = millis();
 
-  // troca de formato
   if (agora - inicioModo >= TROCA_MS) {
-    abreModo((modoAtual + 1) % NUM_MODOS);
+    abreModo((modoAtual + 1) % NUM_MODOS, rxPin, txPin);
   }
 
-  // bytes recebidos: cada byte em hexadecimal; pausa longa separa quadros
   while (Serial2.available()) {
     const uint8_t b = Serial2.read();
     const unsigned long t = millis();
@@ -83,13 +79,11 @@ void loop() {
     bytesDesdeRelatorio++;
   }
 
-  // fecha a linha quando o barramento fica em silencio
   if (linhaAberta && agora - ultimoByte > PAUSA_QUADRO_MS) {
     Serial.println();
     linhaAberta = false;
   }
 
-  // resumo periodico
   if (agora - ultimoRelatorio >= RELATORIO_MS) {
     Serial.printf("[%s] bytes nos ultimos %lu s: %lu (total neste modo: %lu)\n",
                   MODOS[modoAtual].nome, RELATORIO_MS / 1000, bytesDesdeRelatorio, bytesModo);
@@ -99,3 +93,5 @@ void loop() {
 
   delay(1);   // cede o processador (watchdog)
 }
+
+}  // namespace escuta

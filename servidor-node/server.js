@@ -223,6 +223,15 @@ function aplicaTeste(d, agora) {
 // A maquina que recebe um sensor vem do cadastro (pagina /sensores), e nao do nome do topico.
 const RE_SENSOR_ID = /^[A-Za-z0-9_-]{1,30}$/;
 const RE_MAQ_ID = /^[a-z0-9_-]{1,30}$/;
+const habilitador = {};    // "maquina/sensor" -> '1' | '0': nivel do sensor de estado (habilitador)
+// Regra: a batida so conta se algum sensor de estado da maquina estiver ACIONADO ('1').
+// Maquina sem sensor de estado cadastrado conta todas as batidas (comportamento antigo).
+function habilitada(m) {
+  const estados = sensoresDe(m).filter((x) => x.papel === 'estado');
+  if (estados.length === 0) return true;
+  return estados.some((x) => habilitador[`${m.id}/${x.id}`] === '1');
+}
+
 const sensoresVistos = {}; // sensor -> {ultimo, topico, estado}: inclui sensores ainda nao cadastrados
 
 function sensoresDe(m) {
@@ -285,10 +294,18 @@ function onMqttMessage(topicoBruto, payloadBruto) {
     if (!local) return; // ainda nao cadastrado: aparece em /sensores para voce atribuir
     const { m, s } = local;
     visto[m.id] = [agora, `MQTT (${topico})`];
-    if (s.papel !== 'batida') return; // sensor auxiliar: so informa o nivel do sinal
-    if (nivel !== null && ehEstado) estadoSensor[m.id] = nivel;
+    if (s.papel === 'estado') {
+      // sensor de estado (habilitador): guarda o nivel; nunca conta producao
+      if (nivel !== null && ehEstado) {
+        habilitador[`${m.id}/${sid}`] = nivel;
+        estadoSensor[m.id] = nivel; // mostrado na dashboard
+      }
+      return;
+    }
+    if (s.papel !== 'batida') return;
     if ((tipo === 'batida' || tipo === 'legado') && payload === '1') {
-      recebeBatidas(m.id, [agora], `MQTT (${topico})`);
+      if (habilitada(m)) recebeBatidas(m.id, [agora], `MQTT (${topico})`);
+      else console.log(`Batida de ${m.id} ignorada: sensor de estado em repouso`);
     }
   } catch (e) {
     console.log(`Erro ao processar MQTT: ${e.message}`);

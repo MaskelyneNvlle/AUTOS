@@ -81,7 +81,7 @@ Roteiro de validação usado para esta versão:
 
 ## 5. Firmware: o segundo sensor na PLC32
 
-O servidor já aceita quantos sensores vierem. O que falta é a **PLC32 publicar** o segundo sensor. Use o exemplo `docs/exemplos/main_multisensor.cpp` e `config_multisensor.h` como referência (ele compila; ainda não foi gravado na placa):
+O servidor já aceita quantos sensores vierem. O que falta é a **PLC32 publicar** o segundo sensor. O firmware de produção (`firmware/main.cpp` e `firmware/config.h`) já tem a lista de sensores. Os exemplos antigos foram para o backup:
 
 - `config.h`: uma lista `SENSORES[]` com uma linha por sensor: pino (39, 34 ou 35), polaridade e os tópicos `prensa/sensor2/estado` e `prensa/sensor2/batida`.
 - `main.cpp`: um `for` por sensor para detectar a mudança e publicar.
